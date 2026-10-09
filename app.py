@@ -14,41 +14,47 @@ ODDS_API_KEY = os.environ.get("ODDS_API_KEY", "82dc7af21b915e1ca03b2b52118f9f13"
 DB_NAME = "bankroll_journal.db"
 SHARP_BOOK = "pinnacle"
 RETAIL_BOOKS = ["draftkings", "fanduel", "betmgm"]
-MINIMUM_EDGE_PERCENTAGE = 0.035  # 3.5% minimum edge threshold
+MINIMUM_EDGE_PERCENTAGE = 0.035
 
 def init_db():
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS bets (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            date TEXT,
-            bet_type TEXT,
-            description TEXT,
-            staked REAL,
-            potential_payout REAL,
-            status TEXT DEFAULT 'PENDING',
-            profit_loss REAL DEFAULT 0.0
-        )
-    ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS bot_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT,
-            message TEXT
-        )
-    ''')
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS bets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT,
+                bet_type TEXT,
+                description TEXT,
+                staked REAL,
+                potential_payout REAL,
+                status TEXT DEFAULT 'PENDING',
+                profit_loss REAL DEFAULT 0.0
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS bot_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT,
+                message TEXT
+            )
+        ''')
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
 
 def log_system_event(message):
-    init_db()
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    cursor.execute("INSERT INTO bot_logs (timestamp, message) VALUES (?, ?)", (timestamp, message))
-    conn.commit()
-    conn.close()
+    try:
+        init_db()
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        cursor.execute("INSERT INTO bot_logs (timestamp, message) VALUES (?, ?)", (timestamp, message))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
 
 def background_prediction_worker():
     """Autonomous background worker scanning live odds and logging mathematical edges into SQLite."""
@@ -62,7 +68,7 @@ def background_prediction_worker():
         "bookmakers": f"{SHARP_BOOK},draftkings,fanduel,betmgm"
     }
     try:
-        response = requests.get(url, params=params)
+        response = requests.get(url, params=params, timeout=10)
         if response.status_code == 200:
             games = response.json()
             log_system_event(f"Successfully processed {len(games)} live games for edge analysis.")
@@ -92,9 +98,8 @@ def background_prediction_worker():
                                     elif b_key in RETAIL_BOOKS:
                                         if price > retail_best_ml:
                                             retail_best_ml = price
-                                            best_retail_name = book.get('title')
+                                            best_retail_name = book.get('title', 'Retail Book')
 
-                # Calculate Edge: Pinnacle probability vs Retail probability
                 if sharp_home_ml > 0 and retail_best_ml > 0:
                     true_prob = 1.0 / sharp_home_ml
                     retail_prob = 1.0 / retail_best_ml
@@ -102,7 +107,7 @@ def background_prediction_worker():
                     
                     if edge >= MINIMUM_EDGE_PERCENTAGE:
                         edge_pct = round(edge * 100, 1)
-                        desc = f"Quant Edge: {home} ML @ {retail_best_ml}x on {best_retail_name} (+{edge_pct}% Edge vs Pinnacle)"
+                        desc = f"Quant Edge: {home} ML @ {retail_best_ml}x on {best_retail_name} (+{edge_pct}% Edge)"
                         
                         cursor.execute("SELECT id FROM bets WHERE description = ? AND date LIKE ?", (desc, datetime.now().strftime("%Y-%m-%d") + "%"))
                         if not cursor.fetchone():
@@ -111,20 +116,23 @@ def background_prediction_worker():
                                 VALUES (?, ?, ?, ?, ?, ?)
                             ''', (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Straight Edge Pick", desc, 50.0, round(50.0 * retail_best_ml, 2), "PENDING"))
                             conn.commit()
-                            log_system_event(f"Logged new mathematical edge: {desc}")
+                            log_system_event(f"Logged mathematical edge: {desc}")
             conn.close()
         else:
             log_system_event(f"API Error during background sync: Status {response.status_code}")
     except Exception as e:
         log_system_event(f"Background worker exception: {str(e)}")
 
-# Start 24/7 background cron scheduler
-scheduler = BackgroundScheduler()
-scheduler.add_job(func=background_prediction_worker, trigger="interval", hours=1)
-scheduler.start()
+# Start 24/7 background cron scheduler safely
+try:
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(func=background_prediction_worker, trigger="interval", hours=1)
+    scheduler.start()
+except Exception:
+    pass
 
 def fetch_live_quant_data():
-    """Fetches live API data and calculates real metrics, power ratings, and parlays."""
+    """Fetches live API data and calculates real metrics, power ratings, and parlays safely."""
     url = "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/odds"
     params = {
         "apiKey": ODDS_API_KEY,
@@ -135,7 +143,7 @@ def fetch_live_quant_data():
     }
     games = []
     try:
-        response = requests.get(url, params=params)
+        response = requests.get(url, params=params, timeout=10)
         if response.status_code == 200:
             games = response.json()
     except Exception:
@@ -147,8 +155,8 @@ def fetch_live_quant_data():
     parlay_multiplier = 1.0
 
     for game in games:
-        home = game.get('home_team')
-        away = game.get('away_team')
+        home = game.get('home_team', 'Home Team')
+        away = game.get('away_team', 'Away Team')
         books = game.get('bookmakers', [])
         
         sharp_home_ml = 0.0
@@ -167,19 +175,18 @@ def fetch_live_quant_data():
                                 sharp_home_ml = price
                             elif b_key in RETAIL_BOOKS and price > retail_best_ml:
                                 retail_best_ml = price
-                                best_retail_name = book.get('title')
+                                best_retail_name = book.get('title', 'Retail Book')
                 elif market.get('key') == 'spreads':
                     for outcome in market.get('outcomes', []):
                         if outcome.get('name') == home:
-                            spread_val = abs(outcome.get('point', 3.0))
+                            spread_val = abs(float(outcome.get('point', 3.0)))
 
-        # Real mathematical calculations derived from odds
         if sharp_home_ml > 0 and retail_best_ml > 0:
             true_prob = 1.0 / sharp_home_ml
             retail_prob = 1.0 / retail_best_ml
             edge = true_prob - retail_prob
             
-            if edge >= 0.02:  # 2%+ threshold for display
+            if edge >= 0.02:
                 edge_pct = round(edge * 100, 1)
                 indicator = "🔥 HIGH VALUE LOCK" if edge >= 0.05 else "⚡ SHARP EDGE"
                 
@@ -196,7 +203,6 @@ def fetch_live_quant_data():
                     parlay_legs.append(f"{home} ML ({retail_best_ml}x)")
                     parlay_multiplier *= retail_best_ml
 
-        # Derive Power Ratings from point spreads (implied team strengths)
         home_power = round(24.0 + (spread_val * 0.75), 1)
         away_power = round(24.0 - (spread_val * 0.75), 1)
         net_epa = round(home_power - away_power, 2)
@@ -208,7 +214,6 @@ def fetch_live_quant_data():
             "net_rating": f"+{net_epa}"
         })
 
-    # Build dynamic parlay ticket from real legs
     parlay_ticket = None
     if len(parlay_legs) >= 2:
         mult_rounded = round(parlay_multiplier, 2)
@@ -219,13 +224,11 @@ def fetch_live_quant_data():
             "legs": parlay_legs
         }
 
-    # Generate derived player props based on active game matchups
     player_props = []
     for game in games[:4]:
-        away = game.get('away_team')
-        home = game.get('home_team')
+        home = game.get('home_team', 'Home')
         player_props.append({
-            "player": f"Star QB ({home})",
+            "player": f"Star Quarterback",
             "team": home,
             "prop": "Passing Yards",
             "line": "265.5 Over (-110)",
@@ -247,7 +250,6 @@ HTML_TEMPLATE = """
     <style>
         :root {
             --bg-deep: #07090e;
-            --bg-card: #111827;
             --bg-glass: rgba(17, 24, 39, 0.88);
             --gold-primary: #f59e0b;
             --gold-glow: rgba(245, 158, 11, 0.25);
@@ -296,16 +298,14 @@ HTML_TEMPLATE = """
 </head>
 <body>
     <div class="container">
-        <!-- Header -->
         <div class="header">
             <div class="logo">🎲 THE VEGAS <span>QUANT TERMINAL</span></div>
             <div class="live-badge"><div class="pulse"></div>ZERO-PLACEHOLDER LIVE API ENGINE</div>
         </div>
 
-        <!-- Row 1: Straight Bet Picks & Parlay Generator -->
         <div class="grid-2">
             <div class="card-box" style="margin-bottom:0;">
-                <h2>🔥 Live Mathematical Edge Picks (Pinnacle vs Retail)</h2>
+                <h2>🔥 Live Mathematical Edge Picks</h2>
                 {% if straight_picks %}
                     {% for pick in straight_picks %}
                     <div class="pick-row">
@@ -348,7 +348,6 @@ HTML_TEMPLATE = """
             </div>
         </div>
 
-        <!-- Row 2: Player & Team Props -->
         <div class="card-box">
             <h2>⭐ Derived Player & Team Prop Analytics</h2>
             <table>
@@ -365,14 +364,13 @@ HTML_TEMPLATE = """
             </table>
         </div>
 
-        <!-- Row 3: Unified Matchups (Spreads & Moneylines) -->
         <h2>🏈 Live Matchups, Spreads & Moneylines</h2>
         <div class="games-grid">
             {% for game in games %}
             <div class="game-card">
                 <div class="game-header">
                     <span>{{ game.away_team }} @ {{ game.home_team }}</span>
-                    <span style="font-size: 11px; color: var(--text-muted);">{{ game.commence_time[:10] }}</span>
+                    <span style="font-size: 11px; color: var(--text-muted);">{{ game.commence_time[:10] if game.commence_time else '' }}</span>
                 </div>
                 {% if game.bookmakers %}
                     {% for book in game.bookmakers[:2] %}
@@ -407,7 +405,6 @@ HTML_TEMPLATE = """
             {% endfor %}
         </div>
 
-        <!-- Row 4: Power Ratings & Net EPA -->
         <div class="card-box">
             <h2>📈 Real Spread-Derived Power Ratings & EPA</h2>
             <table>
@@ -423,7 +420,6 @@ HTML_TEMPLATE = """
             </table>
         </div>
 
-        <!-- Row 5: SQLite Bankroll Ledger -->
         <div class="card-box">
             <h2>📊 SQLite Bankroll Journal & Autonomous Ledger</h2>
             <table>
@@ -458,14 +454,18 @@ def dashboard():
     init_db()
     games, straight_picks, parlay_ticket, player_props, team_stats = fetch_live_quant_data()
     
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM bets ORDER BY id DESC LIMIT 15")
-    history = cursor.fetchall()
-    
-    cursor.execute("SELECT * FROM bot_logs ORDER BY id DESC LIMIT 15")
-    logs = cursor.fetchall()
-    conn.close()
+    history = []
+    logs = []
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM bets ORDER BY id DESC LIMIT 15")
+        history = cursor.fetchall()
+        cursor.execute("SELECT * FROM bot_logs ORDER BY id DESC LIMIT 15")
+        logs = cursor.fetchall()
+        conn.close()
+    except Exception:
+        pass
     
     return render_template_string(
         HTML_TEMPLATE, 
