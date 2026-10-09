@@ -2,8 +2,7 @@ import os
 import sqlite3
 import requests
 from datetime import datetime, timedelta
-from io import StringIO
-import pandas as pd
+from bs4 import BeautifulSoup
 from flask import Flask, render_template_string
 from flask_apscheduler import APScheduler
 
@@ -132,54 +131,64 @@ def calculate_roi():
         return 0.0, 0.0, 0.0
 
 # ==========================================
-# ESPN POWER RANKINGS SCRAPER
+# ESPN POWER RANKINGS SCRAPER (BS4 Pure Python)
 # ==========================================
 def fetch_espn_power_rankings():
-    """Scrapes official ESPN offense and defense points per game tables."""
+    """Scrapes official ESPN offense and defense points per game tables using BeautifulSoup."""
     team_stats_list = []
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        
+        # Parse Offense
         off_url = "https://www.espn.com/nfl/stats/team/_/table/passing/sort/totalPointsPerGame/dir/desc"
         off_resp = requests.get(off_url, headers=headers, timeout=5)
-        off_tables = pd.read_html(StringIO(off_resp.text))
-        
+        off_dict = {}
+        if off_resp.status_code == 200:
+            soup = BeautifulSoup(off_resp.text, 'html.parser')
+            tables = soup.find_all('table')
+            for table in tables:
+                rows = table.find_all('tr')
+                for row in rows:
+                    cols = [c.get_text(strip=True) for c in row.find_all(['td', 'th'])]
+                    if len(cols) >= 3 and cols[1] not in ['Team', '']:
+                        try:
+                            off_dict[cols[1]] = float(cols[2])
+                        except Exception:
+                            pass
+
+        # Parse Defense
         def_url = "https://www.espn.com/nfl/stats/team/_/view/defense/table/passing/sort/totalPointsPerGame/dir/asc"
         def_resp = requests.get(def_url, headers=headers, timeout=5)
-        def_tables = pd.read_html(StringIO(def_resp.text))
+        def_dict = {}
+        if def_resp.status_code == 200:
+            soup = BeautifulSoup(def_resp.text, 'html.parser')
+            tables = soup.find_all('table')
+            for table in tables:
+                rows = table.find_all('tr')
+                for row in rows:
+                    cols = [c.get_text(strip=True) for c in row.find_all(['td', 'th'])]
+                    if len(cols) >= 3 and cols[1] not in ['Team', '']:
+                        try:
+                            def_dict[cols[1]] = float(cols[2])
+                        except Exception:
+                            pass
+
+        for t in set(list(off_dict.keys()) + list(def_dict.keys())):
+            opg = off_dict.get(t, 22.0)
+            dpg = def_dict.get(t, 22.0)
+            net_idx = round(opg - dpg, 2)
+            team_stats_list.append({
+                "team": t,
+                "net_val": net_idx,
+                "off_epa": f"{opg} PPG Scored",
+                "def_epa": f"{dpg} PPG Allowed",
+                "net_rating": f"{'+' if net_idx >= 0 else ''}{net_idx}"
+            })
         
-        if len(off_tables) >= 2 and len(def_tables) >= 2:
-            off_df = pd.concat([off_tables[0], off_tables[1]], axis=1)
-            def_df = pd.concat([def_tables[0], def_tables[1]], axis=1)
-            
-            off_dict = {}
-            for _, row in off_df.iterrows():
-                try:
-                    off_dict[str(row.iloc[1]).strip()] = float(row.iloc[2])
-                except Exception:
-                    pass
-
-            def_dict = {}
-            for _, row in def_df.iterrows():
-                try:
-                    def_dict[str(row.iloc[1]).strip()] = float(row.iloc[2])
-                except Exception:
-                    pass
-
-            for t in set(list(off_dict.keys()) + list(def_dict.keys())):
-                opg = off_dict.get(t, 22.0)
-                dpg = def_dict.get(t, 22.0)
-                net_idx = round(opg - dpg, 2)
-                team_stats_list.append({
-                    "team": t,
-                    "net_val": net_idx,
-                    "off_epa": f"{opg} PPG Scored",
-                    "def_epa": f"{dpg} PPG Allowed",
-                    "net_rating": f"{'+' if net_idx >= 0 else ''}{net_idx}"
-                })
-            
-            if team_stats_list:
-                team_stats_list.sort(key=lambda x: x['net_val'], reverse=True)
-                return team_stats_list
+        if team_stats_list:
+            team_stats_list.sort(key=lambda x: x['net_val'], reverse=True)
+            log_system_event("Backend: Successfully scraped live ESPN power rankings via BeautifulSoup.")
+            return team_stats_list
     except Exception as e:
         log_system_event(f"ESPN power ranking fallback invoked: {str(e)}")
 
@@ -193,10 +202,10 @@ def fetch_espn_power_rankings():
     ]
 
 # ==========================================
-# NFL.COM PLAYER STATS SCRAPER
+# NFL.COM PLAYER STATS SCRAPER (BS4 Pure Python)
 # ==========================================
 def fetch_nfl_player_stats():
-    """Scrapes official NFL.com player statistics for prop comparison."""
+    """Scrapes official NFL.com player statistics using BeautifulSoup."""
     player_leaders = []
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     urls = {
@@ -208,21 +217,22 @@ def fetch_nfl_player_stats():
         for cat, url in urls.items():
             resp = requests.get(url, headers=headers, timeout=6)
             if resp.status_code == 200:
-                tables = pd.read_html(StringIO(resp.text))
-                if tables:
-                    df = tables[0]
-                    for i in range(min(3, len(df))):
-                        row = df.iloc[i]
-                        player_name = str(row.iloc[0]).strip()
-                        stat_val = str(row.iloc[1]).strip()
-                        player_leaders.append({
-                            "player": player_name,
-                            "position": cat[:-1],
-                            "team": "NFL Live",
-                            "stat_line": f"{cat}: {stat_val}",
-                            "model_proj": "NFL.COM VERIFIED EDGE"
-                        })
+                soup = BeautifulSoup(resp.text, 'html.parser')
+                tables = soup.find_all('table')
+                for table in tables:
+                    rows = table.find_all('tr')
+                    for row in rows[:4]: # top players
+                        cols = [c.get_text(strip=True) for c in row.find_all(['td', 'th'])]
+                        if len(cols) >= 2 and cols[0] not in ['Player', '']:
+                            player_leaders.append({
+                                "player": cols[0],
+                                "position": cat[:-1],
+                                "team": "NFL Live",
+                                "stat_line": f"{cat}: {cols[1]}",
+                                "model_proj": "NFL.COM VERIFIED EDGE"
+                            })
         if player_leaders:
+            log_system_event("Backend: Successfully scraped live NFL.com player stats via BeautifulSoup.")
             return player_leaders
     except Exception as e:
         log_system_event(f"NFL.com player stats fallback invoked: {str(e)}")
@@ -605,7 +615,7 @@ HTML_TEMPLATE = """
     <div class="container">
         <div class="header">
             <div class="logo">🎲 THE VEGAS <span>QUANT TERMINAL</span></div>
-            <div class="live-badge"><div class="pulse"></div>AUTONOMOUS RESEARCH & PARLAY BOT ACTIVE</div>
+            <div class="live-badge"><div class="pulse"></div>BS4 PURE PYTHON SCRAPER ACTIVE</div>
         </div>
 
         <div class="card-box" style="background: rgba(0, 230, 118, 0.04); border-color: rgba(0, 230, 118, 0.25);">
@@ -837,7 +847,7 @@ HTML_TEMPLATE = """
         </div>
 
         <div class="card-box">
-            <h2>⚙️ System Logs (Autonomous Research Engine Active)</h2>
+            <h2>⚙️ System Logs (BeautifulSoup Parser Active)</h2>
             <div class="log-box">
                 {% for log in logs %}
                     <div>[{{ log[1] }}] {{ log[2] }}</div>
