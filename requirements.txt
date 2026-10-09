@@ -3,4 +3,5 @@ gunicorn==22.0.0
 requests==2.34.2
 pandas>=2.2.3
 numpy>=1.26.4
+--no-deps
 nfl_data_py==0.3.3
