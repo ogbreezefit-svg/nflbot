@@ -1,7 +1,7 @@
 Flask
 requests
 nfl_data_py
-pandas
+pandas>=2.2.3
 Flask-APScheduler
 gunicorn
 lxml
