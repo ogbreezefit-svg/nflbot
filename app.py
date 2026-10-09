@@ -38,7 +38,7 @@ scheduler.init_app(app)
 
 @scheduler.task('cron', id='constant_backend_intel', day_of_week='tue,thu,sat,mon', hour=8, minute=0)
 def scheduled_backend_task():
-    """Constantly runs NFL.com player stats & ESPN power rankings ingestion & research on backend."""
+    """Constantly runs NFL.com player stats & research on backend."""
     print("🤖 [CRON BACKEND] Running constant algorithmic research & parlay locking engine...")
     run_autonomous_research_engine()
 
@@ -67,7 +67,7 @@ def decimal_to_american(dec):
         return str(dec)
 
 # ==========================================
-# JOURNAL & ROI ENGINE (SQLite)
+# JOURNAL & PARLAY ARCHIVE ENGINE (SQLite)
 # ==========================================
 def init_db():
     try:
@@ -90,6 +90,17 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT,
                 message TEXT
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS parlay_archive (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT,
+                tier TEXT,
+                stake TEXT,
+                multiplier TEXT,
+                potential_payout TEXT,
+                legs TEXT
             )
         ''')
         conn.commit()
@@ -124,6 +135,23 @@ def log_system_event(message):
     except Exception:
         pass
 
+def log_parlay_archive(tier, stake, multiplier, payout, legs):
+    """Snapshots and archives every generated parlay recommendation into SQLite."""
+    try:
+        init_db()
+        conn = sqlite3.connect(DB_NAME)
+        cursor = conn.cursor()
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        legs_str = " | ".join(legs) if isinstance(legs, list) else str(legs)
+        cursor.execute('''
+            INSERT INTO parlay_archive (timestamp, tier, stake, multiplier, potential_payout, legs)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (timestamp, tier, stake, multiplier, payout, legs_str))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
 def calculate_roi():
     try:
         init_db()
@@ -140,15 +168,16 @@ def calculate_roi():
         return 0.0, 0.0, 0.0
 
 # ==========================================
-# ESPN POWER RANKINGS SCRAPER (Strict 32 Teams)
+# ESPN TEAM STATS SCRAPER (For Offense/Defense Matchup Comparison)
 # ==========================================
-def fetch_espn_power_rankings():
-    team_stats_list = []
+def fetch_team_stats_dict():
+    off_dict, def_dict = {}, {}
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        
+        # Offense PPG
         off_url = "https://www.espn.com/nfl/stats/team/_/table/passing/sort/totalPointsPerGame/dir/desc"
         off_resp = requests.get(off_url, headers=headers, timeout=5)
-        off_dict = {}
         if off_resp.status_code == 200:
             soup = BeautifulSoup(off_resp.text, 'html.parser')
             for table in soup.find_all('table'):
@@ -160,19 +189,16 @@ def fetch_espn_power_rankings():
                                 if team.lower() in val.lower():
                                     try:
                                         for num_candidate in cols:
-                                            try:
-                                                num = float(num_candidate)
-                                                if 5.0 <= num <= 45.0:
-                                                    off_dict[team] = num
-                                                    break
-                                            except ValueError:
-                                                continue
-                                    except Exception:
+                                            num = float(num_candidate)
+                                            if 5.0 <= num <= 45.0:
+                                                off_dict[team] = num
+                                                break
+                                    except ValueError:
                                         pass
 
+        # Defense PPG Allowed
         def_url = "https://www.espn.com/nfl/stats/team/_/view/defense/table/passing/sort/totalPointsPerGame/dir/asc"
         def_resp = requests.get(def_url, headers=headers, timeout=5)
-        def_dict = {}
         if def_resp.status_code == 200:
             soup = BeautifulSoup(def_resp.text, 'html.parser')
             for table in soup.find_all('table'):
@@ -184,35 +210,22 @@ def fetch_espn_power_rankings():
                                 if team.lower() in val.lower():
                                     try:
                                         for num_candidate in cols:
-                                            try:
-                                                num = float(num_candidate)
-                                                if 5.0 <= num <= 45.0:
-                                                    def_dict[team] = num
-                                                    break
-                                            except ValueError:
-                                                continue
-                                    except Exception:
+                                            num = float(num_candidate)
+                                            if 5.0 <= num <= 45.0:
+                                                def_dict[team] = num
+                                                break
+                                    except ValueError:
                                         pass
-
-        for t in VALID_NFL_TEAMS:
-            opg = off_dict.get(t, 22.0)
-            dpg = def_dict.get(t, 22.0)
-            net_idx = round(opg - dpg, 2)
-            team_stats_list.append({
-                "team": t,
-                "net_val": net_idx,
-                "off_epa": f"{opg} PPG Scored",
-                "def_epa": f"{dpg} PPG Allowed",
-                "net_rating": f"{'+' if net_idx >= 0 else ''}{net_idx}"
-            })
-        
-        if team_stats_list:
-            team_stats_list.sort(key=lambda x: x['net_val'], reverse=True)
-            return team_stats_list
     except Exception as e:
-        log_system_event(f"ESPN power ranking fallback invoked: {str(e)}")
+        log_system_event(f"Team stats fetch fallback invoked: {str(e)}")
 
-    return [{"team": t, "net_val": 5.0, "off_epa": "24.0 PPG Scored", "def_epa": "21.0 PPG Allowed", "net_rating": "+3.0"} for t in VALID_NFL_TEAMS]
+    stats_map = {}
+    for t in VALID_NFL_TEAMS:
+        stats_map[t] = {
+            "off": off_dict.get(t, 22.0), # Higher is better offense
+            "def": def_dict.get(t, 21.0)  # Lower is better defense (fewer points allowed)
+        }
+    return stats_map
 
 # ==========================================
 # NFL.COM PLAYER STATS SCRAPER
@@ -233,7 +246,7 @@ def fetch_nfl_player_stats():
                 tables = soup.find_all('table')
                 for table in tables:
                     rows = table.find_all('tr')
-                    for row in rows[:2]: # Compact view (top 2 per category)
+                    for row in rows[:2]:
                         cols = [c.get_text(strip=True) for c in row.find_all(['td', 'th'])]
                         if len(cols) >= 2 and cols[0] not in ['Player', '']:
                             player_leaders.append({
@@ -270,44 +283,50 @@ def run_trend_sniffer():
     ]
 
 # ==========================================
-# STRICT THRESHOLD PARLAY BUILDERS
+# STRICT THRESHOLD PARLAY BUILDERS & ARCHIVER
 # ==========================================
 def build_parlays(player_leaders):
-    # 1. $50 Parlay Cap (Standard Edge Matrix)
+    standard_legs = ["Dallas Cowboys ML", "Green Bay Over 44.5", "Dak Prescott Over 265.5 Pass Yds"]
     standard_parlay = {
         "stake": "$50.00",
         "multiplier": "10.2x (+920)",
         "potential_payout": "$510.00",
         "status_badge": "🎯 $50 CAP STANDARD PARLAY",
-        "legs": ["Dallas Cowboys ML", "Green Bay Over 44.5", "Dak Prescott Over 265.5 Pass Yds"]
+        "legs": standard_legs
     }
+    log_parlay_archive("Standard Cap ($50)", "$50.00", "10.2x (+920)", "$510.00", standard_legs)
 
-    # 2. $25 Parlay with Minimum 50x Multiplier
     booster_mult = 55.0
+    booster_legs = ["Baltimore Ravens -3.5", "Derrick Henry 2+ TDs", "CeeDee Lamb Over 82.5 Rec Yds", "Travis Kelce Over 4.5 Rec"]
+    booster_payout = f"${25.0 * booster_mult:,.2f}"
     booster_parlay = {
         "stake": "$25.00",
         "multiplier": f"{booster_mult}x (+5400)",
-        "potential_payout": f"${25.0 * booster_mult:,.2f}",
+        "potential_payout": booster_payout,
         "status_badge": "⚡ $25 BOOSTER (50x+ TARGET)",
-        "legs": ["Baltimore Ravens -3.5", "Derrick Henry 2+ TDs", "CeeDee Lamb Over 82.5 Rec Yds", "Travis Kelce Over 4.5 Rec"]
+        "legs": booster_legs
     }
+    log_parlay_archive("Booster Tier ($25, 50x+)", "$25.00", f"{booster_mult}x (+5400)", booster_payout, booster_legs)
 
-    # 3. $15 - $25 Parlay with Minimum $1,000 Winnings
     bomb_stake = 20.0
-    bomb_mult = 52.5 # $20 * 52.5 = $1,050.00 winnings ($1,000+ payout)
+    bomb_mult = 52.5 
+    bomb_legs = ["Josh Allen 3+ Pass TDs", "Ja'Marr Chase First TD", "Justin Jefferson 105+ Rec Yds", "San Francisco -6.5"]
+    bomb_payout = f"${bomb_stake * bomb_mult:,.2f}"
     bomb_parlay = {
         "stake": f"${bomb_stake:.2f}",
         "multiplier": f"{bomb_mult}x (+5150)",
-        "potential_payout": f"${bomb_stake * bomb_mult:,.2f}",
+        "potential_payout": bomb_payout,
         "status_badge": "💣 $15-$25 BOMB ($1,000+ MIN WIN)",
-        "legs": ["Josh Allen 3+ Pass TDs", "Ja'Marr Chase First TD", "Justin Jefferson 105+ Rec Yds", "San Francisco -6.5"]
+        "legs": bomb_legs
     }
+    log_parlay_archive("Bomb Target ($15-$25, $1k+ Win)", f"${bomb_stake:.2f}", f"{bomb_mult}x (+5150)", bomb_payout, bomb_legs)
 
-    # 4. Sub-Threshold / Micro Sandbox (Parlays below strict thresholds)
     sub_threshold_parlays = [
         {"desc": "Low-Value 3-Leg SGP (+180 odds) - Insufficient Multiplier for Tier 2/3", "stake": "$10.00", "payout": "$28.00"},
         {"desc": "Casual 2-Leg Favorite Parlay (-110 combined) - Sub-threshold edge", "stake": "$10.00", "payout": "$19.09"}
     ]
+    for sub in sub_threshold_parlays:
+        log_parlay_archive("Sub-Threshold Sandbox", sub["stake"], "N/A", sub["payout"], [sub["desc"]])
 
     return standard_parlay, booster_parlay, bomb_parlay, sub_threshold_parlays
 
@@ -318,7 +337,7 @@ def fetch_terminal_data():
     init_db()
     run_autonomous_research_engine()
     trend_insights = run_trend_sniffer()
-    team_stats = fetch_espn_power_rankings()
+    team_stats_map = fetch_team_stats_dict()
     player_leaders = fetch_nfl_player_stats()
 
     standard_parlay, booster_parlay, bomb_parlay, sub_threshold_parlays = build_parlays(player_leaders)
@@ -357,6 +376,22 @@ def fetch_terminal_data():
         else:
             games = raw_games[:16]
 
+    # Enrich games with better offense & defense comparison metrics
+    for g in games:
+        home = g.get('home_team', 'Home')
+        away = g.get('away_team', 'Away')
+        
+        home_st = team_stats_map.get(home, {"off": 22.0, "def": 21.0})
+        away_st = team_stats_map.get(away, {"off": 22.0, "def": 21.0})
+        
+        # Offense: Higher PPG is better
+        g['better_off'] = away if away_st['off'] > home_st['off'] else home
+        g['better_off_stat'] = f"{max(away_st['off'], home_st['off'])} PPG"
+        
+        # Defense: Lower PPG allowed is better
+        g['better_def'] = away if away_st['def'] < home_st['def'] else home
+        g['better_def_stat'] = f"{min(away_st['def'], home_st['def'])} PPG Allowed"
+
     straight_picks = []
     for game in games:
         home = game.get('home_team', 'Home')
@@ -393,7 +428,7 @@ def fetch_terminal_data():
     total_staked, total_profit, roi = calculate_roi()
     bankroll_summary = f"Total Staked: ${total_staked:,.2f} | Net Profit: ${total_profit:,.2f} | ROI: {roi}%"
 
-    return games, straight_picks, standard_parlay, booster_parlay, bomb_parlay, sub_threshold_parlays, team_stats, player_leaders, bankroll_summary, trend_insights
+    return games, straight_picks, standard_parlay, booster_parlay, bomb_parlay, sub_threshold_parlays, player_leaders, bankroll_summary, trend_insights
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -519,7 +554,7 @@ HTML_TEMPLATE = """
         }
         .parlay-mult { font-size: 22px; font-weight: 800; color: var(--gold-vegas); text-shadow: 0 0 12px var(--gold-glow); }
         
-        .games-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; margin-bottom: 16px; }
+        .games-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; margin-bottom: 16px; }
         .game-card { 
             background: var(--card-glass); 
             border: 1px solid var(--border-gold); 
@@ -663,6 +698,27 @@ HTML_TEMPLATE = """
             </table>
         </div>
 
+        <!-- PERMANENT PARLAY ARCHIVE VAULT -->
+        <div class="card-box" style="border-color: rgba(212, 175, 55, 0.35);">
+            <h2>🗄️ Permanent Parlay Archive Vault (Weekly History Log)</h2>
+            <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 10px;">
+                Every recommended or filtered parlay generated throughout the week is snapshotted here so you can review past lines anytime.
+            </div>
+            <table>
+                <tr><th>Timestamp</th><th>Tier / Category</th><th>Stake</th><th>Multiplier</th><th>Potential Payout</th><th>Legs / Description</th></tr>
+                {% for row in parlay_archive_rows %}
+                <tr>
+                    <td style="color: var(--text-muted); font-size: 10px;">{{ row[1] }}</td>
+                    <td style="color: var(--gold-vegas); font-weight:700;">{{ row[2] }}</td>
+                    <td>{{ row[3] }}</td>
+                    <td style="color: #38bdf8; font-weight:700;">{{ row[4] }}</td>
+                    <td style="color: var(--neon-green); font-weight:700;">{{ row[5] }}</td>
+                    <td style="font-size: 10px; color: #e5e7eb;">{{ row[6] }}</td>
+                </tr>
+                {% endfor %}
+            </table>
+        </div>
+
         <div class="grid-2">
             <!-- Straight Bets -->
             <div class="card-box" style="margin-bottom:0;">
@@ -701,7 +757,7 @@ HTML_TEMPLATE = """
             </div>
         </div>
 
-        <h2 style="margin-top: 20px;">🏈 Live Matchups (1-Week Slate) & Spreads</h2>
+        <h2 style="margin-top: 20px;">🏈 Live Matchups (1-Week Slate), Spreads & Tale of the Tape (Offense / Defense Edge)</h2>
         <div class="games-grid">
             {% for game in games %}
             <div class="game-card">
@@ -709,6 +765,19 @@ HTML_TEMPLATE = """
                     <span>{{ game.away_team }} @ {{ game.home_team }}</span>
                     <span style="font-size: 9px; color: var(--text-muted);">{{ game.commence_time[:10] if game.commence_time else '' }}</span>
                 </div>
+                
+                <!-- Matchup Tale of the Tape Edge -->
+                <div style="background: rgba(212, 175, 55, 0.05); border: 1px solid var(--border-gold); border-radius: 6px; padding: 8px; margin-bottom: 8px; font-size: 11px;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 3px;">
+                        <span style="color: var(--text-muted);">⚡ Better Offense:</span>
+                        <strong style="color: var(--neon-green);">{{ game.better_off }} ({{ game.better_off_stat }})</strong>
+                    </div>
+                    <div style="display: flex; justify-content: space-between;">
+                        <span style="color: var(--text-muted);">🛡️ Better Defense:</span>
+                        <strong style="color: #38bdf8;">{{ game.better_def }} ({{ game.better_def_stat }})</strong>
+                    </div>
+                </div>
+
                 {% if game.bookmakers %}
                     {% for book in game.bookmakers[:1] %}
                     <div class="market-sec">
@@ -741,21 +810,6 @@ HTML_TEMPLATE = """
         </div>
 
         <div class="card-box">
-            <h2>📈 ESPN Official Ranked Team Power Ratings (32 Teams)</h2>
-            <table>
-                <tr><th>Rank & Team</th><th>Offense Scoring</th><th>Defense Allowance</th><th>Net EPA Index</th></tr>
-                {% for stat in team_stats %}
-                <tr>
-                    <td><strong>#{{ loop.index }} &bull; {{ stat.team }}</strong></td>
-                    <td style="color: var(--neon-green);">{{ stat.off_epa }}</td>
-                    <td style="color: var(--neon-red);">{{ stat.def_epa }}</td>
-                    <td style="color: {{ 'var(--neon-green)' if '+' in stat.net_rating else 'var(--neon-red)' }}; font-weight:700;">{{ stat.net_rating }}</td>
-                </tr>
-                {% endfor %}
-            </table>
-        </div>
-
-        <div class="card-box">
             <h2>📊 SQLite Bankroll Journal</h2>
             <table>
                 <tr><th>Timestamp</th><th>Type</th><th>Description</th><th>Stake</th><th>Status</th></tr>
@@ -775,7 +829,7 @@ HTML_TEMPLATE = """
             <h2>⚙️ System Logs</h2>
             <div class="log-box">
                 {% for log in logs %}
-                    <div>[{{ log[1] }}] {{ log[2] }}</div>
+                    <div>[{{ log[1] ]] {{ log[2] }}</div>
                 {% endfor %}
             </div>
         </div>
@@ -786,9 +840,9 @@ HTML_TEMPLATE = """
 
 @app.route("/")
 def dashboard():
-    games, straight_picks, standard_parlay, booster_parlay, bomb_parlay, sub_threshold_parlays, team_stats, player_leaders, bankroll_summary, trend_insights = fetch_terminal_data()
+    games, straight_picks, standard_parlay, booster_parlay, bomb_parlay, sub_threshold_parlays, player_leaders, bankroll_summary, trend_insights = fetch_terminal_data()
     
-    history, logs = [], []
+    history, logs, parlay_archive_rows = [], [], []
     try:
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
@@ -796,6 +850,8 @@ def dashboard():
         history = cursor.fetchall()
         cursor.execute("SELECT * FROM bot_logs ORDER BY id DESC LIMIT 15")
         logs = cursor.fetchall()
+        cursor.execute("SELECT * FROM parlay_archive ORDER BY id DESC LIMIT 30")
+        parlay_archive_rows = cursor.fetchall()
         conn.close()
     except Exception:
         pass
@@ -808,11 +864,11 @@ def dashboard():
         booster_parlay=booster_parlay,
         bomb_parlay=bomb_parlay,
         sub_threshold_parlays=sub_threshold_parlays,
-        team_stats=team_stats, 
         player_leaders=player_leaders,
         bankroll_summary=bankroll_summary,
         history=history, 
         logs=logs,
+        parlay_archive_rows=parlay_archive_rows,
         trend_insights=trend_insights,
         decimal_to_american=decimal_to_american
     )
