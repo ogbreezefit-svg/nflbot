@@ -7,8 +7,14 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 app = Flask(__name__)
 
+# ==========================================
+# CONFIGURATION & ENVIRONMENT VARIABLES
+# ==========================================
 ODDS_API_KEY = os.environ.get("ODDS_API_KEY", "82dc7af21b915e1ca03b2b52118f9f13")
 DB_NAME = "bankroll_journal.db"
+SHARP_BOOK = "pinnacle"
+RETAIL_BOOKS = "draftkings,fanduel,betmgm"
+MINIMUM_EDGE_PERCENTAGE = 0.04
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
@@ -45,31 +51,80 @@ def log_system_event(message):
     conn.close()
 
 def background_prediction_worker():
-    log_system_event("Autonomous background scan executed.")
+    """Autonomous 24/7 background worker scanning odds and logging automated model edges."""
+    log_system_event("Autonomous background scanner initiated.")
     url = "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/odds"
     params = {
         "apiKey": ODDS_API_KEY,
         "regions": "us",
         "markets": "h2h,spreads",
         "oddsFormat": "decimal",
-        "bookmakers": "pinnacle,draftkings,fanduel,betmgm"
+        "bookmakers": f"{SHARP_BOOK},{RETAIL_BOOKS}"
     }
     try:
         response = requests.get(url, params=params)
         if response.status_code == 200:
             games = response.json()
-            log_system_event(f"Successfully processed {len(games)} live games in background.")
-        else:
-            log_system_event(f"API Error: Status {response.status_code}")
-    except Exception as e:
-        log_system_event(f"Error in background worker: {str(e)}")
+            log_system_event(f"Successfully fetched {len(games)} live games from Vegas API.")
+            
+            # Autonomous Mock Bet & Edge Evaluation Engine
+            init_db()
+            conn = sqlite3.connect(DB_NAME)
+            cursor = conn.cursor()
+            
+            for game in games[:3]:
+                home = game.get('home_team', 'Home')
+                away = game.get('away_team', 'Away')
+                books = game.get('bookmakers', [])
+                
+                # Look for Pinnacle sharp price vs retail
+                sharp_price = 0.0
+                retail_price = 0.0
+                best_book_name = "DraftKings"
+                
+                for book in books:
+                    if book.get('key') == SHARP_BOOK:
+                        for market in book.get('markets', []):
+                            if market.get('key') == 'h2h':
+                                for outcome in market.get('outcomes', []):
+                                    if outcome.get('name') == home:
+                                        sharp_price = outcome.get('price', 0.0)
+                    elif book.get('key') in ['draftkings', 'fanduel']:
+                        for market in book.get('markets', []):
+                            if market.get('key') == 'h2h':
+                                for outcome in market.get('outcomes', []):
+                                    if outcome.get('name') == home and outcome.get('price', 0.0) > retail_price:
+                                        retail_price = outcome.get('price', 0.0)
+                                        best_book_name = book.get('title', 'Retail Book')
 
-# Start Background Scheduler safely
+                if sharp_price > 0 and retail_price > 0:
+                    true_prob = 1 / sharp_price
+                    retail_prob = 1 / retail_price
+                    edge = true_prob - retail_prob
+                    
+                    if edge >= MINIMUM_EDGE_PERCENTAGE:
+                        desc = f"Model Edge: {home} ML @ {retail_price}x on {best_book_name} (Edge: {round(edge*100, 1)}%)"
+                        cursor.execute("SELECT id FROM bets WHERE description = ? AND date LIKE ?", (desc, datetime.now().strftime("%Y-%m-%d") + "%"))
+                        if not cursor.fetchone():
+                            cursor.execute('''
+                                INSERT INTO bets (date, bet_type, description, staked, potential_payout, status)
+                                VALUES (?, ?, ?, ?, ?, ?)
+                            ''', (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "Quant Edge Pick", desc, 50.0, round(50.0 * retail_price, 2), "PENDING"))
+                            conn.commit()
+                            log_system_event(f"Logged automated value bet: {desc}")
+            conn.close()
+        else:
+            log_system_event(f"API Error during background sync: Status {response.status_code}")
+    except Exception as e:
+        log_system_event(f"Background worker exception: {str(e)}")
+
+# Initialize and start background cron scheduler (Runs every hour automatically)
 scheduler = BackgroundScheduler()
 scheduler.add_job(func=background_prediction_worker, trigger="interval", hours=1)
 scheduler.start()
 
 def fetch_structured_games():
+    """Fetches live odds and market data for rendering unified UI cards."""
     url = "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/odds"
     params = {
         "apiKey": ODDS_API_KEY,
@@ -87,13 +142,13 @@ def fetch_structured_games():
     return []
 
 # ==========================================
-# FAIL-SAFE VEGAS LUXURY UI TEMPLATE
+# FULL VEGAS LUXURY UI TEMPLATE (HTML/CSS)
 # ==========================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>THE VEGAS QUANT | Unified Betting Terminal</title>
+    <title>THE VEGAS QUANT | Autonomous NFL Betting Terminal</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
@@ -143,11 +198,13 @@ HTML_TEMPLATE = """
 </head>
 <body>
     <div class="container">
+        <!-- Header Banner -->
         <div class="header">
             <div class="logo">🎲 THE VEGAS <span>QUANT TERMINAL</span></div>
-            <div class="live-badge"><div class="pulse"></div>24/7 BACKGROUND WORKER ACTIVE</div>
+            <div class="live-badge"><div class="pulse"></div>24/7 AUTONOMOUS WORKER ACTIVE</div>
         </div>
 
+        <!-- Unified Matchup Cards Grid -->
         <h2>🏈 Live Matchup Odds & Casino Markets</h2>
         <div class="games-grid">
             {% if games %}
@@ -201,13 +258,14 @@ HTML_TEMPLATE = """
                 {% endfor %}
             {% else %}
                 <div class="card-box" style="grid-column: 1 / -1; text-align: center; color: var(--text-muted);">
-                    Awaiting live games feed from API... Check API key or game schedule.
+                    Awaiting live game feed from API... Check API key or active game schedules.
                 </div>
             {% endif %}
         </div>
 
+        <!-- Bankroll Ledger Section -->
         <div class="card-box">
-            <h2>📊 Automated Bankroll & Model Ledger</h2>
+            <h2>📊 Autonomous Quant Model Ledger & Bankroll Journal</h2>
             <table>
                 <tr><th>Timestamp</th><th>Type</th><th>Description</th><th>Stake</th><th>Status</th></tr>
                 {% for row in history %}
@@ -222,11 +280,12 @@ HTML_TEMPLATE = """
             </table>
         </div>
 
+        <!-- Background Execution Logs Section -->
         <div class="card-box">
-            <h2>⚙️ Background Scheduler & Worker Logs</h2>
+            <h2>⚙️ 24/7 Background Scheduler & Worker Logs</h2>
             <div class="log-box">
                 {% for log in logs %}
-                    <div>[{{ log[1] }}] {{ log[2] }}</div>
+                    <div>[{{ log[1] ]] {{ log[2] }}</div>
                 {% endfor %}
             </div>
         </div>
@@ -242,10 +301,10 @@ def dashboard():
     
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute("SELECT * FROM bets ORDER BY id DESC LIMIT 10")
+    cursor.execute("SELECT * FROM bets ORDER BY id DESC LIMIT 15")
     history = cursor.fetchall()
     
-    cursor.execute("SELECT * FROM bot_logs ORDER BY id DESC LIMIT 10")
+    cursor.execute("SELECT * FROM bot_logs ORDER BY id DESC LIMIT 15")
     logs = cursor.fetchall()
     conn.close()
     
