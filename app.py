@@ -2,7 +2,6 @@ import os
 import sqlite3
 import requests
 import pandas as pd
-import nfl_data_py as nfl
 from datetime import datetime
 from flask import Flask, render_template_string
 
