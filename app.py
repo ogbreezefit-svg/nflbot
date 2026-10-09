@@ -45,7 +45,6 @@ def log_system_event(message):
     conn.close()
 
 def background_prediction_worker():
-    """Runs automatically every hour in the background 24/7."""
     log_system_event("Autonomous background scan executed.")
     url = "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/odds"
     params = {
@@ -59,19 +58,18 @@ def background_prediction_worker():
         response = requests.get(url, params=params)
         if response.status_code == 200:
             games = response.json()
-            log_system_event(f"Successfully processed {len(games)} live games.")
+            log_system_event(f"Successfully processed {len(games)} live games in background.")
         else:
             log_system_event(f"API Error: Status {response.status_code}")
     except Exception as e:
         log_system_event(f"Error in background worker: {str(e)}")
 
-# Start Background Scheduler
+# Start Background Scheduler safely
 scheduler = BackgroundScheduler()
 scheduler.add_job(func=background_prediction_worker, trigger="interval", hours=1)
 scheduler.start()
 
 def fetch_structured_games():
-    """Fetches and structures live odds data for the UI game cards."""
     url = "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/odds"
     params = {
         "apiKey": ODDS_API_KEY,
@@ -80,13 +78,16 @@ def fetch_structured_games():
         "oddsFormat": "decimal",
         "bookmakers": "pinnacle,draftkings,fanduel,betmgm"
     }
-    response = requests.get(url, params=params)
-    if response.status_code == 200:
-        return response.json()
+    try:
+        response = requests.get(url, params=params)
+        if response.status_code == 200:
+            return response.json()
+    except Exception:
+        pass
     return []
 
 # ==========================================
-# UNIFIED VEGAS LUXURY UI TEMPLATE
+# FAIL-SAFE VEGAS LUXURY UI TEMPLATE
 # ==========================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -119,22 +120,19 @@ HTML_TEMPLATE = """
 
         h2 { font-size: 16px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--gold-primary); margin-top: 0; margin-bottom: 20px; display: flex; align-items: center; gap: 8px; }
 
-        /* Matchup Cards Grid */
         .games-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 20px; margin-bottom: 30px; }
         .game-card { background: var(--bg-glass); backdrop-filter: blur(12px); border: 1px solid var(--border-color); border-radius: 16px; padding: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.3); position: relative; overflow: hidden; }
         .game-card::before { content: ''; position: absolute; top: 0; left: 0; width: 4px; height: 100%; background: var(--gold-primary); }
         
         .game-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; border-bottom: 1px solid var(--border-color); padding-bottom: 10px; }
-        .matchup-title { font-size: 16px; font-weight: 800; color: #fff; }
+        .matchup-title { font-size: 15px; font-weight: 800; color: #fff; }
         .kickoff { font-size: 11px; color: var(--text-muted); }
 
-        /* Bookmaker Lines Section */
-        .market-section { margin-bottom: 12px; background: rgba(0,0,0,0.25); border-radius: 10px; padding: 12px; border: 1px solid rgba(255,255,255,0.04); }
+        .market-section { margin-bottom: 10px; background: rgba(0,0,0,0.25); border-radius: 10px; padding: 10px 12px; border: 1px solid rgba(255,255,255,0.04); }
         .book-title { font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--gold-primary); margin-bottom: 6px; letter-spacing: 0.5px; }
         .odds-row { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px; }
         .odds-val { color: #38bdf8; font-weight: 700; }
         
-        /* Section Containers */
         .card-box { background: var(--bg-glass); backdrop-filter: blur(12px); border: 1px solid var(--border-color); border-radius: 16px; padding: 25px; margin-bottom: 25px; box-shadow: 0 10px 25px rgba(0,0,0,0.3); }
         table { width: 100%; border-collapse: collapse; margin-top: 10px; }
         th, td { padding: 12px; text-align: left; border-bottom: 1px solid var(--border-color); font-size: 13px; }
@@ -145,55 +143,69 @@ HTML_TEMPLATE = """
 </head>
 <body>
     <div class="container">
-        <!-- Header -->
         <div class="header">
             <div class="logo">🎲 THE VEGAS <span>QUANT TERMINAL</span></div>
-            <div class="live-badge"><div class="pulse"></div>24/7 SCHEDULER & LIVE ODDS ACTIVE</div>
+            <div class="live-badge"><div class="pulse"></div>24/7 BACKGROUND WORKER ACTIVE</div>
         </div>
 
-        <!-- Unified Game Cards Grid -->
         <h2>🏈 Live Matchup Odds & Casino Markets</h2>
         <div class="games-grid">
-            {% for game in games %}
-            <div class="game-card">
-                <div class="game-header">
-                    <div class="matchup-title">{{ game.away_team }} @ {{ game.home_team }}</div>
-                    <div class="kickoff">{{ game.commence_time[:16].replace('T', ' ') }} UTC</div>
-                </div>
+            {% if games %}
+                {% for game in games %}
+                <div class="game-card">
+                    <div class="game-header">
+                        <div class="matchup-title">{{ game.away_team }} @ {{ game.home_team }}</div>
+                        <div class="kickoff">{{ game.commence_time[:16].replace('T', ' ') }} UTC</div>
+                    </div>
 
-                {% for book in game.bookmakers %}
-                <div class="market-section">
-                    <div class="book-title">{{ book.title }}</div>
-                    
-                    {# Extract Moneylines & Spreads for this book #}
-                    {% set ns = namespace(away_ml='N/A', home_ml='N/A', away_spread='N/A', home_spread='N/A') %}
-                    {% for m in book.markets %}
-                        {% for o in m.outcomes %}
-                            {% if m.key == 'h2h' %}
-                                {% if o.name == game.away_team %}{% set ns.away_ml = o.price ~ 'x' %}{% endif %}
-                                {% if o.name == game.home_team %}{% set ns.home_ml = o.price ~ 'x' %}{% endif %}
-                            {% elif m.key == 'spreads' %}
-                                {% if o.name == game.away_team %}{% set ns.away_spread = o.point ~ ' (' ~ o.price ~ 'x)' %}{% endif %}
-                                {% if o.name == game.home_team %}{% set ns.home_spread = o.point ~ ' (' ~ o.price ~ 'x)' %}{% endif %}
+                    {% if game.bookmakers %}
+                        {% for book in game.bookmakers %}
+                        <div class="market-section">
+                            <div class="book-title">{{ book.title }}</div>
+                            
+                            {% set away_ml = namespace(val='N/A') %}
+                            {% set home_ml = namespace(val='N/A') %}
+                            {% set away_spread = namespace(val='N/A') %}
+                            {% set home_spread = namespace(val='N/A') %}
+
+                            {% if book.markets %}
+                                {% for m in book.markets %}
+                                    {% if m.outcomes %}
+                                        {% for o in m.outcomes %}
+                                            {% if m.key == 'h2h' %}
+                                                {% if o.name == game.away_team %}{% set away_ml.val = o.price|string + 'x' %}{% endif %}
+                                                {% if o.name == game.home_team %}{% set home_ml.val = o.price|string + 'x' %}{% endif %}
+                                            {% elif m.key == 'spreads' %}
+                                                {% if o.name == game.away_team %}{% set away_spread.val = (o.point|string) + ' (' + (o.price|string) + 'x)' %}{% endif %}
+                                                {% if o.name == game.home_team %}{% set home_spread.val = (o.point|string) + ' (' + (o.price|string) + 'x)' %}{% endif %}
+                                            {% endif %}
+                                        {% endfor %}
+                                    {% endif %}
+                                {% endfor %}
                             {% endif %}
-                        {% endfor %}
-                    {% endfor %}
 
-                    <div class="odds-row">
-                        <span>{{ game.away_team }} (Away)</span>
-                        <div>ML: <span class="odds-val">{{ ns.away_ml }}</span> | Spread: <span class="odds-val">{{ ns.away_spread }}</span></div>
-                    </div>
-                    <div class="odds-row">
-                        <span>{{ game.home_team }} (Home)</span>
-                        <div>ML: <span class="odds-val">{{ ns.home_ml }}</span> | Spread: <span class="odds-val">{{ ns.home_spread }}</span></div>
-                    </div>
+                            <div class="odds-row">
+                                <span>{{ game.away_team }}</span>
+                                <div>ML: <span class="odds-val">{{ away_ml.val }}</span> | Spread: <span class="odds-val">{{ away_spread.val }}</span></div>
+                            </div>
+                            <div class="odds-row">
+                                <span>{{ game.home_team }}</span>
+                                <div>ML: <span class="odds-val">{{ home_ml.val }}</span> | Spread: <span class="odds-val">{{ home_spread.val }}</span></div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <div style="color: var(--text-muted); font-size: 13px;">No bookmaker odds available currently.</div>
+                    {% endif %}
                 </div>
                 {% endfor %}
-            </div>
-            {% endfor %}
+            {% else %}
+                <div class="card-box" style="grid-column: 1 / -1; text-align: center; color: var(--text-muted);">
+                    Awaiting live games feed from API... Check API key or game schedule.
+                </div>
+            {% endif %}
         </div>
 
-        <!-- Ledger History -->
         <div class="card-box">
             <h2>📊 Automated Bankroll & Model Ledger</h2>
             <table>
@@ -210,12 +222,11 @@ HTML_TEMPLATE = """
             </table>
         </div>
 
-        <!-- Background Logs -->
         <div class="card-box">
             <h2>⚙️ Background Scheduler & Worker Logs</h2>
             <div class="log-box">
                 {% for log in logs %}
-                    <div>[{{ log[1] ]] {{ log[2] }}</div>
+                    <div>[{{ log[1] }}] {{ log[2] }}</div>
                 {% endfor %}
             </div>
         </div>
