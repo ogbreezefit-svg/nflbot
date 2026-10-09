@@ -14,12 +14,11 @@ ODDS_API_KEY = os.environ.get("ODDS_API_KEY", "82dc7af21b915e1ca03b2b52118f9f13"
 DB_NAME = "bankroll_journal.db"
 SHARP_BOOK = "pinnacle"
 RETAIL_BOOKS = ["draftkings", "fanduel", "betmgm"]
-MINIMUM_EDGE_PERCENTAGE = 0.035  # 3.5% minimum edge threshold (Veto rule)
-MAX_PARLAY_RISK = 50.0           # $50 max risk for standard parlays
-TARGET_PARLAY_MULT = 10.0        # 10x minimum payout target
+MINIMUM_EDGE_PERCENTAGE = 0.035
+MAX_PARLAY_RISK = 50.0
+TARGET_PARLAY_MULT = 10.0
 
 def init_db():
-    """Initializes SQLite bankroll journal and execution logging tables."""
     try:
         conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
@@ -48,7 +47,6 @@ def init_db():
         pass
 
 def log_system_event(message):
-    """Logs system events and background scan activities."""
     try:
         init_db()
         conn = sqlite3.connect(DB_NAME)
@@ -61,11 +59,6 @@ def log_system_event(message):
         pass
 
 def background_prediction_worker():
-    """
-    Autonomous 24/7 background worker (The Brain).
-    Scans live odds, calculates sharp vs retail discrepancies, applies guardrails,
-    and logs validated wagers into the SQLite bankroll journal.
-    """
     log_system_event("Background Quant Engine: Initializing odds scan & edge calculation...")
     url = "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/odds"
     params = {
@@ -108,7 +101,6 @@ def background_prediction_worker():
                                             retail_best_ml = price
                                             best_retail_name = book.get('title', 'Retail Book')
 
-                # Strict Edge Verification (Sharp Probability vs Retail Probability)
                 if sharp_home_ml > 0 and retail_best_ml > 0:
                     true_prob = 1.0 / sharp_home_ml
                     retail_prob = 1.0 / retail_best_ml
@@ -132,7 +124,6 @@ def background_prediction_worker():
     except Exception as e:
         log_system_event(f"Background worker error: {str(e)}")
 
-# Start 24/7 Background Scheduler Safely
 try:
     scheduler = BackgroundScheduler()
     scheduler.add_job(func=background_prediction_worker, trigger="interval", hours=1)
@@ -141,10 +132,6 @@ except Exception:
     pass
 
 def fetch_live_quant_data():
-    """
-    Parses live API responses to build dynamic straight bets, 10x target parlays,
-    derived player prop projections, and power rating efficiency matrices.
-    """
     url = "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/odds"
     params = {
         "apiKey": ODDS_API_KEY,
@@ -193,7 +180,6 @@ def fetch_live_quant_data():
                         if outcome.get('name') == home:
                             spread_val = abs(float(outcome.get('point', 3.0)))
 
-        # Evaluate straight bet value indicators
         if sharp_home_ml > 0 and retail_best_ml > 0:
             true_prob = 1.0 / sharp_home_ml
             retail_prob = 1.0 / retail_best_ml
@@ -211,12 +197,10 @@ def fetch_live_quant_data():
                     "indicator": indicator
                 })
                 
-                # Build legs for the Standard 10x Parlay Target ($50 Max Risk)
                 if len(parlay_legs) < 3:
                     parlay_legs.append(f"{home} ML @ {retail_best_ml}x ({best_retail_name})")
                     parlay_multiplier *= retail_best_ml
 
-        # Calculate Spread-Derived Power Ratings & EPA
         home_power = round(24.0 + (spread_val * 0.75), 1)
         away_power = round(24.0 - (spread_val * 0.75), 1)
         net_epa = round(home_power - away_power, 2)
@@ -228,14 +212,10 @@ def fetch_live_quant_data():
             "net_rating": f"+{net_epa}"
         })
 
-    # Standard Parlay Guardrail Check ($50 Stake, Target >= 10x Payout)
     parlay_ticket = None
     if len(parlay_legs) >= 2:
         mult_rounded = round(parlay_multiplier, 2)
-        if mult_rounded >= TARGET_PARLAY_MULT:
-            parlay_status = "🎯 10x TARGET MET"
-        else:
-            parlay_status = "⚡ BUILD IN PROGRESS"
+        parlay_status = "🎯 10x TARGET MET" if mult_rounded >= TARGET_PARLAY_MULT else "⚡ BUILD IN PROGRESS"
             
         parlay_ticket = {
             "multiplier": f"{mult_rounded}x",
@@ -245,7 +225,6 @@ def fetch_live_quant_data():
             "legs": parlay_legs
         }
 
-    # Derived Player Prop Projections (Defense vs. Position Baseline)
     player_props = []
     for game in games[:4]:
         home_team = game.get('home_team', 'Home')
@@ -267,9 +246,6 @@ def fetch_live_quant_data():
 
     return games, straight_picks, parlay_ticket, player_props, team_stats
 
-# ==========================================
-# ULTIMATE VEGAS LUXURY UI TEMPLATE
-# ==========================================
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html>
@@ -328,13 +304,11 @@ HTML_TEMPLATE = """
 </head>
 <body>
     <div class="container">
-        <!-- Header Banner -->
         <div class="header">
             <div class="logo">🎲 THE VEGAS <span>QUANT TERMINAL</span></div>
             <div class="live-badge"><div class="pulse"></div>AUTONOMOUS 24/7 BETTING MACHINE ACTIVE</div>
         </div>
 
-        <!-- Row 1: Straight Bet Edge Indicators & 10x Parlay Target -->
         <div class="grid-2">
             <div class="card-box" style="margin-bottom:0;">
                 <h2>🔥 High-Confidence Straight Bet Edge Picks</h2>
@@ -381,7 +355,6 @@ HTML_TEMPLATE = """
             </div>
         </div>
 
-        <!-- Row 2: Player & Team Props Terminal -->
         <div class="card-box">
             <h2>⭐ Player & Team Prop Edge Analytics</h2>
             <table>
@@ -398,7 +371,6 @@ HTML_TEMPLATE = """
             </table>
         </div>
 
-        <!-- Row 3: Unified Live Game Cards (Spreads & Moneylines) -->
         <h2>🏈 Live Matchups, Spreads & Multi-Book Odds</h2>
         <div class="games-grid">
             {% for game in games %}
@@ -440,7 +412,6 @@ HTML_TEMPLATE = """
             {% endfor %}
         </div>
 
-        <!-- Row 4: Power Ratings & Season Stats Baseline -->
         <div class="card-box">
             <h2>📈 Real Spread-Derived Power Ratings & EPA Matrix</h2>
             <table>
@@ -456,7 +427,6 @@ HTML_TEMPLATE = """
             </table>
         </div>
 
-        <!-- Row 5: SQLite Bankroll Journal & System Logs -->
         <div class="card-box">
             <h2>📊 SQLite Bankroll Journal & Autonomous Ledger</h2>
             <table>
