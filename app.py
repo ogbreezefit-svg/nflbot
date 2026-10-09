@@ -14,7 +14,9 @@ ODDS_API_KEY = os.environ.get("ODDS_API_KEY", "82dc7af21b915e1ca03b2b52118f9f13"
 DB_NAME = "bankroll_journal.db"
 SHARP_BOOK = "pinnacle"
 RETAIL_BOOKS = ["draftkings", "fanduel", "betmgm"]
-MINIMUM_EDGE_PERCENTAGE = 0.035  # 3.5% minimum edge threshold for straight bets
+MINIMUM_EDGE_PERCENTAGE = 0.035  # 3.5% minimum edge threshold (Veto rule)
+MAX_PARLAY_RISK = 50.0           # $50 max risk for standard parlays
+TARGET_PARLAY_MULT = 10.0        # 10x minimum payout target
 
 def init_db():
     """Initializes SQLite bankroll journal and execution logging tables."""
@@ -60,11 +62,11 @@ def log_system_event(message):
 
 def background_prediction_worker():
     """
-    Autonomous 24/7 background worker.
+    Autonomous 24/7 background worker (The Brain).
     Scans live odds, calculates sharp vs retail discrepancies, applies guardrails,
     and logs validated wagers into the SQLite bankroll journal.
     """
-    log_system_event("Background Quant Engine: Initializing weekly odds scan...")
+    log_system_event("Background Quant Engine: Initializing odds scan & edge calculation...")
     url = "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/odds"
     params = {
         "apiKey": ODDS_API_KEY,
@@ -209,7 +211,7 @@ def fetch_live_quant_data():
                     "indicator": indicator
                 })
                 
-                # Build legs for the 10x Standard Parlay Target ($50 Max Risk)
+                # Build legs for the Standard 10x Parlay Target ($50 Max Risk)
                 if len(parlay_legs) < 3:
                     parlay_legs.append(f"{home} ML @ {retail_best_ml}x ({best_retail_name})")
                     parlay_multiplier *= retail_best_ml
@@ -230,10 +232,16 @@ def fetch_live_quant_data():
     parlay_ticket = None
     if len(parlay_legs) >= 2:
         mult_rounded = round(parlay_multiplier, 2)
+        if mult_rounded >= TARGET_PARLAY_MULT:
+            parlay_status = "🎯 10x TARGET MET"
+        else:
+            parlay_status = "⚡ BUILD IN PROGRESS"
+            
         parlay_ticket = {
             "multiplier": f"{mult_rounded}x",
-            "potential_payout": f"${round(50.0 * mult_rounded, 2):,.2f}",
-            "stake": "$50.00",
+            "potential_payout": f"${round(MAX_PARLAY_RISK * mult_rounded, 2):,.2f}",
+            "stake": f"${MAX_PARLAY_RISK:.2f}",
+            "status_badge": parlay_status,
             "legs": parlay_legs
         }
 
@@ -353,9 +361,10 @@ HTML_TEMPLATE = """
                 {% if parlay_ticket %}
                     <div class="parlay-card">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                            <span style="font-weight: 700; font-size: 15px;">Target Return 10x+ Matrix</span>
+                            <span style="font-weight: 700; font-size: 15px;">Target Return Matrix</span>
                             <span class="parlay-mult">{{ parlay_ticket.multiplier }}</span>
                         </div>
+                        <div style="margin-bottom: 10px;"><span class="indicator-badge">{{ parlay_ticket.status_badge }}</span></div>
                         <ul style="margin: 0 0 15px 0; padding-left: 18px; font-size: 13px; color: var(--text-muted);">
                             {% for leg in parlay_ticket.legs %}
                                 <li style="margin-bottom: 6px; color: #fff; font-weight: 600;">{{ leg }}</li>
