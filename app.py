@@ -1,7 +1,7 @@
 import os
 import sqlite3
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, render_template_string
 from flask_apscheduler import APScheduler
 
@@ -242,16 +242,35 @@ def fetch_terminal_data():
         "oddsFormat": "decimal",
         "bookmakers": "pinnacle,draftkings,fanduel,betmgm"
     }
-    games = []
+    raw_games = []
     try:
         response = requests.get(url, params=params, timeout=10)
         if response.status_code == 200:
-            games = response.json()
+            raw_games = response.json()
     except Exception:
         pass
 
+    # Filter games strictly to 1 week (7-day window based on earliest game date)
+    games = []
+    if raw_games:
+        valid_games = [g for g in raw_games if g.get('commence_time')]
+        if valid_games:
+            valid_games.sort(key=lambda x: x.get('commence_time'))
+            first_date_str = valid_games[0].get('commence_time')[:10]
+            try:
+                first_date = datetime.strptime(first_date_str, "%Y-%m-%d")
+                cutoff_date = first_date + timedelta(days=7)
+                for g in valid_games:
+                    g_date = datetime.strptime(g.get('commence_time')[:10], "%Y-%m-%d")
+                    if g_date <= cutoff_date:
+                        games.append(g)
+            except Exception:
+                games = valid_games[:16]
+        else:
+            games = raw_games[:16]
+
     straight_picks = []
-    team_stats = []
+    team_stats_dict = {}
     parlay_legs = []
     parlay_multiplier = 1.0
 
@@ -300,22 +319,27 @@ def fetch_terminal_data():
                     parlay_legs.append(f"{home} ML @ {decimal_to_american(retail_best)} ({best_book})")
                     parlay_multiplier *= retail_best
 
-        # Balanced Power Ratings
+        # Balanced Power Ratings Calculation
         home_net = round(spread_val * 0.5, 2) if home_is_favorite else round(-spread_val * 0.5, 2)
         away_net = -home_net
 
-        team_stats.append({
+        team_stats_dict[home] = {
             "team": home,
+            "net_val": home_net,
             "off_epa": f"{'+' if home_net >= 0 else ''}{round(24.0 + home_net, 1)} pts/g",
             "def_epa": f"{round(22.0 - home_net, 1)} pts allowed",
             "net_rating": f"{'+' if home_net >= 0 else ''}{home_net}"
-        })
-        team_stats.append({
+        }
+        team_stats_dict[away] = {
             "team": away,
+            "net_val": away_net,
             "off_epa": f"{'+' if away_net >= 0 else ''}{round(24.0 + away_net, 1)} pts/g",
             "def_epa": f"{round(22.0 - away_net, 1)} pts allowed",
             "net_rating": f"{'+' if away_net >= 0 else ''}{away_net}"
-        })
+        }
+
+    # Rank unique teams from best to worst offense/defense (highest net rating first)
+    team_stats = sorted(list(team_stats_dict.values()), key=lambda x: x['net_val'], reverse=True)
 
     parlay_ticket = None
     if len(parlay_legs) >= 2:
@@ -366,7 +390,6 @@ HTML_TEMPLATE = """
         }
         .container { max-width: 1250px; margin: auto; }
         
-        /* High Roller Header */
         .header { 
             display: flex; 
             justify-content: space-between; 
@@ -457,7 +480,6 @@ HTML_TEMPLATE = """
         }
         .parlay-mult { font-size: 26px; font-weight: 800; color: var(--gold-vegas); text-shadow: 0 0 20px var(--gold-glow); }
         
-        /* Tabs */
         .tabs { display: flex; gap: 10px; margin-bottom: 15px; border-bottom: 1px solid var(--border-gold); padding-bottom: 12px; }
         .tab-btn { 
             background: rgba(255, 255, 255, 0.03); 
@@ -669,7 +691,7 @@ HTML_TEMPLATE = """
             </div>
         </div>
 
-        <h2>🏈 Live Matchups, Spreads & Multi-Book Odds</h2>
+        <h2>🏈 Live Matchups (1-Week Slate), Spreads & Multi-Book Odds</h2>
         <div class="games-grid">
             {% for game in games %}
             <div class="game-card">
@@ -709,12 +731,12 @@ HTML_TEMPLATE = """
         </div>
 
         <div class="card-box">
-            <h2>📈 Balanced Team Power Ratings & EPA Matrix</h2>
+            <h2>📈 Ranked Team Power Ratings & EPA Matrix (Best to Worst)</h2>
             <table>
-                <tr><th>Team</th><th>Implied Offense Baseline</th><th>Implied Defense Baseline</th><th>Net EPA Power Index</th></tr>
+                <tr><th>Rank & Team</th><th>Implied Offense Baseline</th><th>Implied Defense Baseline</th><th>Net EPA Power Index</th></tr>
                 {% for stat in team_stats %}
                 <tr>
-                    <td><strong>{{ stat.team }}</strong></td>
+                    <td><strong>#{{ loop.index }} &bull; {{ stat.team }}</strong></td>
                     <td style="color: var(--neon-green);">{{ stat.off_epa }}</td>
                     <td style="color: var(--neon-red);">{{ stat.def_epa }}</td>
                     <td style="color: {{ 'var(--neon-green)' if '+' in stat.net_rating else 'var(--neon-red)' }}; font-weight:700;">{{ stat.net_rating }}</td>
