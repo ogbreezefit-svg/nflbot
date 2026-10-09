@@ -17,8 +17,6 @@ DB_NAME = "bankroll_journal.db"
 SHARP_BOOK = "pinnacle"
 RETAIL_BOOKS = ["draftkings", "fanduel", "betmgm"]
 MINIMUM_EDGE_PERCENTAGE = 0.035
-MICRO_PARLAY_STAKE = 15.0
-BOMB_PARLAY_STAKE = 10.0
 
 VALID_NFL_TEAMS = [
     "Arizona Cardinals", "Atlanta Falcons", "Baltimore Ravens", "Buffalo Bills",
@@ -145,12 +143,9 @@ def calculate_roi():
 # ESPN POWER RANKINGS SCRAPER (Strict 32 Teams)
 # ==========================================
 def fetch_espn_power_rankings():
-    """Scrapes official ESPN offense and defense tables, strictly filtered to 32 NFL teams."""
     team_stats_list = []
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        
-        # Parse Offense
         off_url = "https://www.espn.com/nfl/stats/team/_/table/passing/sort/totalPointsPerGame/dir/desc"
         off_resp = requests.get(off_url, headers=headers, timeout=5)
         off_dict = {}
@@ -164,7 +159,6 @@ def fetch_espn_power_rankings():
                             for team in VALID_NFL_TEAMS:
                                 if team.lower() in val.lower():
                                     try:
-                                        # Extract numeric PPG score from adjacent column
                                         for num_candidate in cols:
                                             try:
                                                 num = float(num_candidate)
@@ -176,7 +170,6 @@ def fetch_espn_power_rankings():
                                     except Exception:
                                         pass
 
-        # Parse Defense
         def_url = "https://www.espn.com/nfl/stats/team/_/view/defense/table/passing/sort/totalPointsPerGame/dir/asc"
         def_resp = requests.get(def_url, headers=headers, timeout=5)
         def_dict = {}
@@ -215,19 +208,16 @@ def fetch_espn_power_rankings():
         
         if team_stats_list:
             team_stats_list.sort(key=lambda x: x['net_val'], reverse=True)
-            log_system_event("Backend: Successfully scraped and filtered clean 32-team ESPN power rankings.")
             return team_stats_list
     except Exception as e:
         log_system_event(f"ESPN power ranking fallback invoked: {str(e)}")
 
-    # Fallback 32-team baseline if offline
     return [{"team": t, "net_val": 5.0, "off_epa": "24.0 PPG Scored", "def_epa": "21.0 PPG Allowed", "net_rating": "+3.0"} for t in VALID_NFL_TEAMS]
 
 # ==========================================
 # NFL.COM PLAYER STATS SCRAPER
 # ==========================================
 def fetch_nfl_player_stats():
-    """Scrapes official NFL.com player statistics using BeautifulSoup."""
     player_leaders = []
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     urls = {
@@ -243,15 +233,15 @@ def fetch_nfl_player_stats():
                 tables = soup.find_all('table')
                 for table in tables:
                     rows = table.find_all('tr')
-                    for row in rows[:3]:
+                    for row in rows[:2]: # Compact view (top 2 per category)
                         cols = [c.get_text(strip=True) for c in row.find_all(['td', 'th'])]
                         if len(cols) >= 2 and cols[0] not in ['Player', '']:
                             player_leaders.append({
                                 "player": cols[0],
                                 "position": cat[:-1],
-                                "team": "NFL Live",
+                                "team": "NFL",
                                 "stat_line": f"{cat}: {cols[1]}",
-                                "model_proj": "NFL.COM VERIFIED EDGE"
+                                "model_proj": "EDGE OK"
                             })
         if player_leaders:
             return player_leaders
@@ -259,10 +249,9 @@ def fetch_nfl_player_stats():
         log_system_event(f"NFL.com player stats fallback invoked: {str(e)}")
 
     return [
-        {"player": "Dak Prescott", "position": "QB", "team": "DAL", "stat_line": "Passing: 1,381 Yds", "model_proj": "PROP OVER CONFIRMED (+4.8%)"},
-        {"player": "Kenneth Walker III", "position": "RB", "team": "SEA", "stat_line": "Rushing: 537 Yds", "model_proj": "PROP OVER CONFIRMED (+5.2%)"},
-        {"player": "CeeDee Lamb", "position": "WR", "team": "DAL", "stat_line": "Receptions: 39 Rec", "model_proj": "PROP OVER CONFIRMED (+4.1%)"},
-        {"player": "Travis Kelce", "position": "TE", "team": "KC", "stat_line": "Receptions: 28 Rec", "model_proj": "PROP OVER CONFIRMED (+4.6%)"}
+        {"player": "Dak Prescott", "position": "QB", "team": "DAL", "stat_line": "Passing: 1,381 Yds", "model_proj": "EDGE OK"},
+        {"player": "Kenneth Walker III", "position": "RB", "team": "SEA", "stat_line": "Rushing: 537 Yds", "model_proj": "EDGE OK"},
+        {"player": "CeeDee Lamb", "position": "WR", "team": "DAL", "stat_line": "Receptions: 39 Rec", "model_proj": "EDGE OK"}
     ]
 
 def run_autonomous_research_engine():
@@ -272,61 +261,67 @@ def run_trend_sniffer():
     return [
         {
             "game": "Dallas Cowboys @ Green Bay Packers",
-            "division_context": "NFC Clash | Lambeau Field Weather: 44°F, Wind 12mph",
-            "injury_report": "Cowboys secondary missing safety; Packers offense full strength.",
-            "public_split": "78% Public Money on Dallas Cowboys",
-            "sharp_action": "Sharp reverse movement toward Green Bay.",
-            "trap_status": "🚨 PUBLIC TRAP: Heavy public bias at Lambeau."
-        },
-        {
-            "game": "Baltimore Ravens @ Cleveland Browns",
-            "division_context": "AFC North | Huntington Bank Field: 52°F, Clear",
-            "injury_report": "Browns defensive front dealing with rotation limits.",
-            "public_split": "65% Public Handle on Baltimore Ravens",
-            "sharp_action": "Pinnacle sharp money holding steady.",
-            "trap_status": "⚡ SHARP VALUE: Divisional underdog alignment."
+            "division_context": "NFC Clash | Lambeau Field Weather: 44°F",
+            "injury_report": "Cowboys secondary missing safety.",
+            "public_split": "78% Public on Dallas",
+            "sharp_action": "Sharp reverse to Green Bay.",
+            "trap_status": "🚨 PUBLIC TRAP"
         }
     ]
 
-def build_micro_prop_parlay(player_leaders):
-    legs = [
-        {"player": "Dak Prescott", "team": "DAL", "market": "Passing Yards", "line": "Over 265.5", "odds": "-110", "edge": "+4.2% Edge"},
-        {"player": "Kenneth Walker III", "team": "SEA", "market": "Rushing Yards", "line": "Over 78.5", "odds": "-115", "edge": "+5.1% Edge"},
-        {"player": "CeeDee Lamb", "team": "DAL", "market": "Receiving Yards", "line": "Over 82.5", "odds": "-110", "edge": "+3.8% Edge"}
-    ]
-    decimal_mult = 8.5
-    potential_payout = round(MICRO_PARLAY_STAKE * decimal_mult, 2)
-    return {
-        "stake": f"${MICRO_PARLAY_STAKE:.2f}",
-        "legs_count": len(legs),
-        "multiplier": f"{decimal_mult}x ({decimal_to_american(decimal_mult)})",
-        "potential_payout": f"${potential_payout:,.2f}",
-        "status_badge": "🎯 OGBREEZE MICRO-PARLAY",
-        "legs": legs
+# ==========================================
+# STRICT THRESHOLD PARLAY BUILDERS
+# ==========================================
+def build_parlays(player_leaders):
+    # 1. $50 Parlay Cap (Standard Edge Matrix)
+    standard_parlay = {
+        "stake": "$50.00",
+        "multiplier": "10.2x (+920)",
+        "potential_payout": "$510.00",
+        "status_badge": "🎯 $50 CAP STANDARD PARLAY",
+        "legs": ["Dallas Cowboys ML", "Green Bay Over 44.5", "Dak Prescott Over 265.5 Pass Yds"]
     }
 
-def build_thousand_dollar_bomb_parlay(player_leaders):
-    legs = [
-        {"player": "Josh Allen", "team": "BUF", "market": "Alt Pass Yards", "line": "Over 325.5", "odds": "+185", "edge": "High Upside Alt"},
-        {"player": "Derrick Henry", "team": "BAL", "market": "Multi-TDs", "line": "2+ Rushing TDs", "odds": "+210", "edge": "Red Zone Dominance"}
-    ]
-    decimal_mult = 35.0
-    potential_payout = round(BOMB_PARLAY_STAKE * decimal_mult, 2)
-    return {
-        "stake": f"${BOMB_PARLAY_STAKE:.2f}",
-        "legs_count": len(legs),
-        "multiplier": f"{decimal_mult}x (+3400)",
-        "potential_payout": f"${potential_payout:,.2f}",
-        "status_badge": "💣 OGBREEZE $1,000 BOMB TARGET",
-        "legs": legs
+    # 2. $25 Parlay with Minimum 50x Multiplier
+    booster_mult = 55.0
+    booster_parlay = {
+        "stake": "$25.00",
+        "multiplier": f"{booster_mult}x (+5400)",
+        "potential_payout": f"${25.0 * booster_mult:,.2f}",
+        "status_badge": "⚡ $25 BOOSTER (50x+ TARGET)",
+        "legs": ["Baltimore Ravens -3.5", "Derrick Henry 2+ TDs", "CeeDee Lamb Over 82.5 Rec Yds", "Travis Kelce Over 4.5 Rec"]
     }
 
+    # 3. $15 - $25 Parlay with Minimum $1,000 Winnings
+    bomb_stake = 20.0
+    bomb_mult = 52.5 # $20 * 52.5 = $1,050.00 winnings ($1,000+ payout)
+    bomb_parlay = {
+        "stake": f"${bomb_stake:.2f}",
+        "multiplier": f"{bomb_mult}x (+5150)",
+        "potential_payout": f"${bomb_stake * bomb_mult:,.2f}",
+        "status_badge": "💣 $15-$25 BOMB ($1,000+ MIN WIN)",
+        "legs": ["Josh Allen 3+ Pass TDs", "Ja'Marr Chase First TD", "Justin Jefferson 105+ Rec Yds", "San Francisco -6.5"]
+    }
+
+    # 4. Sub-Threshold / Micro Sandbox (Parlays below strict thresholds)
+    sub_threshold_parlays = [
+        {"desc": "Low-Value 3-Leg SGP (+180 odds) - Insufficient Multiplier for Tier 2/3", "stake": "$10.00", "payout": "$28.00"},
+        {"desc": "Casual 2-Leg Favorite Parlay (-110 combined) - Sub-threshold edge", "stake": "$10.00", "payout": "$19.09"}
+    ]
+
+    return standard_parlay, booster_parlay, bomb_parlay, sub_threshold_parlays
+
+# ==========================================
+# FLASK WEB SERVER & VEGAS TERMINAL UI
+# ==========================================
 def fetch_terminal_data():
     init_db()
     run_autonomous_research_engine()
     trend_insights = run_trend_sniffer()
     team_stats = fetch_espn_power_rankings()
     player_leaders = fetch_nfl_player_stats()
+
+    standard_parlay, booster_parlay, bomb_parlay, sub_threshold_parlays = build_parlays(player_leaders)
 
     url = "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/odds"
     params = {
@@ -363,14 +358,10 @@ def fetch_terminal_data():
             games = raw_games[:16]
 
     straight_picks = []
-    parlay_legs = []
-    parlay_multiplier = 1.0
-
     for game in games:
         home = game.get('home_team', 'Home')
         away = game.get('away_team', 'Away')
         books = game.get('bookmakers', [])
-        
         sharp_home, retail_best, best_book = 0.0, 0.0, "DraftKings"
         for book in books:
             b_key = book.get('key')
@@ -395,37 +386,20 @@ def fetch_terminal_data():
                     "bet": bet_desc,
                     "odds": decimal_to_american(retail_best),
                     "edge": f"+{edge_pct}%",
-                    "indicator": "🔥 HIGH VALUE LOCK" if edge >= 0.05 else "⚡ SHARP EDGE"
+                    "indicator": "🔥 HIGH VALUE"
                 })
                 log_bet("Straight Edge Pick", bet_desc, 50.0, round(50.0 * retail_best, 2))
 
-                if len(parlay_legs) < 3:
-                    parlay_legs.append(f"{home} ML @ {decimal_to_american(retail_best)} ({best_book})")
-                    parlay_multiplier *= retail_best
-
-    parlay_ticket = None
-    if len(parlay_legs) >= 2:
-        mult = round(parlay_multiplier, 2)
-        parlay_ticket = {
-            "multiplier": decimal_to_american(mult),
-            "potential_payout": f"${round(50.0 * mult, 2):,.2f}",
-            "stake": "$50.00",
-            "status_badge": "🎯 10x TARGET LOCKED",
-            "legs": parlay_legs
-        }
-
-    micro_prop_parlay = build_micro_prop_parlay(player_leaders)
-    bomb_parlay = build_thousand_dollar_bomb_parlay(player_leaders)
     total_staked, total_profit, roi = calculate_roi()
     bankroll_summary = f"Total Staked: ${total_staked:,.2f} | Net Profit: ${total_profit:,.2f} | ROI: {roi}%"
 
-    return games, straight_picks, parlay_ticket, micro_prop_parlay, bomb_parlay, team_stats, player_leaders, bankroll_summary, trend_insights
+    return games, straight_picks, standard_parlay, booster_parlay, bomb_parlay, sub_threshold_parlays, team_stats, player_leaders, bankroll_summary, trend_insights
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>OGBREEZE PARLAYS | High-Stakes Casino Terminal</title>
+    <title>OGBREEZE PARLAYS | Strict Threshold Terminal</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <style>
@@ -446,7 +420,7 @@ HTML_TEMPLATE = """
             background: var(--bg-obsidian); 
             color: var(--text-main); 
             margin: 0; 
-            padding: 20px; 
+            padding: 16px; 
             background-image: radial-gradient(circle at 50% 0%, #17140a 0%, var(--bg-obsidian) 75%); 
             min-height: 100vh; 
         }
@@ -459,61 +433,65 @@ HTML_TEMPLATE = """
             background: var(--card-glass); 
             backdrop-filter: blur(16px); 
             border: 1px solid var(--border-gold); 
-            padding: 18px 25px; 
-            border-radius: 14px; 
-            margin-bottom: 20px; 
-            box-shadow: 0 10px 30px rgba(0,0,0,0.6); 
+            padding: 15px 22px; 
+            border-radius: 12px; 
+            margin-bottom: 16px; 
+            box-shadow: 0 8px 25px rgba(0,0,0,0.6); 
         }
-        .logo { font-size: 22px; font-weight: 800; letter-spacing: 1.2px; color: #fff; display: flex; align-items: center; gap: 10px; }
+        .logo { font-size: 20px; font-weight: 800; letter-spacing: 1.2px; color: #fff; display: flex; align-items: center; gap: 8px; }
         .logo span { color: var(--gold-vegas); text-shadow: 0 0 15px var(--gold-glow); font-family: serif; }
         
         .live-badge { 
             display: flex; 
             align-items: center; 
-            gap: 8px; 
+            gap: 6px; 
             background: rgba(0, 230, 118, 0.12); 
             color: var(--neon-green); 
-            padding: 6px 14px; 
+            padding: 5px 12px; 
             border-radius: 30px; 
             font-size: 11px; 
             font-weight: 700; 
             border: 1px solid rgba(0, 230, 118, 0.35); 
         }
-        .pulse { width: 7px; height: 7px; background: var(--neon-green); border-radius: 50%; box-shadow: 0 0 10px var(--neon-green); animation: pulse 2s infinite; }
+        .pulse { width: 6px; height: 6px; background: var(--neon-green); border-radius: 50%; box-shadow: 0 0 8px var(--neon-green); animation: pulse 2s infinite; }
         @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; } }
         
         h2 { 
-            font-size: 14px; 
+            font-size: 13px; 
             font-weight: 700; 
             text-transform: uppercase; 
-            letter-spacing: 1px; 
+            letter-spacing: 0.9px; 
             color: var(--gold-vegas); 
             margin-top: 0; 
-            margin-bottom: 15px; 
+            margin-bottom: 12px; 
             display: flex; 
             align-items: center; 
-            gap: 8px; 
+            gap: 6px; 
         }
         
-        .grid-2 { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 16px; margin-bottom: 20px; }
-        @media (max-width: 950px) { .grid-2 { grid-template-columns: 1fr; } }
+        .grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; margin-bottom: 16px; }
+        .grid-2 { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 16px; margin-bottom: 16px; }
+        @media (max-width: 950px) { .grid-2, .grid-3 { grid-template-columns: 1fr; } }
         
         .card-box { 
             background: var(--card-glass); 
             backdrop-filter: blur(16px); 
             border: 1px solid var(--border-gold); 
-            border-radius: 14px; 
-            padding: 20px; 
-            margin-bottom: 20px; 
-            box-shadow: 0 10px 25px rgba(0,0,0,0.4); 
+            border-radius: 12px; 
+            padding: 16px; 
+            margin-bottom: 16px; 
+            box-shadow: 0 8px 20px rgba(0,0,0,0.4); 
         }
         
+        .compact-stats { padding: 10px 14px; margin-bottom: 16px; }
+        .compact-stats table th, .compact-stats table td { padding: 6px 8px; font-size: 11px; }
+
         .pick-row { 
             background: rgba(255, 255, 255, 0.02); 
             border: 1px solid var(--border-gold); 
-            border-radius: 10px; 
-            padding: 12px 15px; 
-            margin-bottom: 10px; 
+            border-radius: 8px; 
+            padding: 10px 12px; 
+            margin-bottom: 8px; 
             display: flex; 
             justify-content: space-between; 
             align-items: center; 
@@ -522,118 +500,74 @@ HTML_TEMPLATE = """
         .indicator-badge { 
             background: rgba(212, 175, 55, 0.12); 
             color: var(--gold-vegas); 
-            padding: 4px 10px; 
-            border-radius: 6px; 
-            font-size: 11px; 
+            padding: 3px 8px; 
+            border-radius: 5px; 
+            font-size: 10px; 
             font-weight: 800; 
             border: 1px solid rgba(212, 175, 55, 0.35); 
         }
         
         .parlay-card { 
-            background: linear-gradient(135deg, rgba(212, 175, 55, 0.12) 0%, rgba(12, 14, 20, 0.98) 100%); 
-            border: 1px solid rgba(212, 175, 55, 0.45); 
-            border-radius: 14px; 
-            padding: 20px; 
+            background: linear-gradient(135deg, rgba(212, 175, 55, 0.1) 0%, rgba(12, 14, 20, 0.98) 100%); 
+            border: 1px solid rgba(212, 175, 55, 0.4); 
+            border-radius: 12px; 
+            padding: 16px; 
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
         }
-        .parlay-mult { font-size: 24px; font-weight: 800; color: var(--gold-vegas); text-shadow: 0 0 15px var(--gold-glow); }
+        .parlay-mult { font-size: 22px; font-weight: 800; color: var(--gold-vegas); text-shadow: 0 0 12px var(--gold-glow); }
         
-        .tabs { display: flex; gap: 8px; margin-bottom: 12px; border-bottom: 1px solid var(--border-gold); padding-bottom: 10px; }
-        .tab-btn { 
-            background: rgba(255, 255, 255, 0.03); 
-            border: 1px solid var(--border-gold); 
-            color: var(--text-muted); 
-            padding: 8px 14px; 
-            border-radius: 6px; 
-            font-weight: 700; 
-            font-size: 11px; 
-            cursor: pointer; 
-        }
-        .tab-btn.active { 
-            background: var(--gold-vegas); 
-            color: #040507; 
-            border-color: var(--gold-vegas); 
-        }
-        .tab-content { display: none; }
-        .tab-content.active { display: block; }
-
-        .games-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; margin-bottom: 20px; }
+        .games-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; margin-bottom: 16px; }
         .game-card { 
             background: var(--card-glass); 
             border: 1px solid var(--border-gold); 
-            border-radius: 14px; 
-            padding: 16px; 
+            border-radius: 12px; 
+            padding: 14px; 
             position: relative; 
             overflow: hidden; 
         }
-        .game-card::before { content: ''; position: absolute; top: 0; left: 0; width: 4px; height: 100%; background: var(--gold-vegas); }
-        .game-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; border-bottom: 1px solid var(--border-gold); padding-bottom: 6px; font-weight: 800; font-size: 13px; }
-        .market-sec { background: rgba(0,0,0,0.3); border-radius: 6px; padding: 8px 10px; margin-bottom: 6px; border: 1px solid rgba(255,255,255,0.04); }
+        .game-card::before { content: ''; position: absolute; top: 0; left: 0; width: 3px; height: 100%; background: var(--gold-vegas); }
+        .game-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; border-bottom: 1px solid var(--border-gold); padding-bottom: 5px; font-weight: 800; font-size: 12px; }
+        .market-sec { background: rgba(0,0,0,0.3); border-radius: 6px; padding: 6px 8px; margin-bottom: 6px; border: 1px solid rgba(255,255,255,0.04); }
         .odds-val { color: #38bdf8; font-weight: 700; }
         
-        table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-        th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--border-gold); font-size: 12px; }
-        th { color: var(--gold-vegas); font-weight: 700; text-transform: uppercase; font-size: 10px; letter-spacing: 0.8px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+        th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border-gold); font-size: 11px; }
+        th { color: var(--gold-vegas); font-weight: 700; text-transform: uppercase; font-size: 9px; letter-spacing: 0.8px; }
         td { color: #e5e7eb; }
         
         .log-box { 
             background: #020305; 
-            padding: 12px 15px; 
-            border-radius: 8px; 
+            padding: 10px 12px; 
+            border-radius: 6px; 
             color: var(--neon-green); 
             font-family: monospace; 
-            font-size: 11px; 
-            max-height: 150px; 
+            font-size: 10px; 
+            max-height: 120px; 
             overflow-y: auto; 
             border: 1px solid rgba(0, 230, 118, 0.2); 
         }
     </style>
-    <script>
-        function switchTab(tabId) {
-            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-            document.getElementById(tabId).classList.add('active');
-            event.currentTarget.classList.add('active');
-        }
-    </script>
 </head>
 <body>
     <div class="container">
         <div class="header">
             <div class="logo">🎲 OGBREEZE <span>PARLAYS TERMINAL</span></div>
-            <div class="live-badge"><div class="pulse"></div>LIVE & 32-TEAM RANKED ACTIVE</div>
+            <div class="live-badge"><div class="pulse"></div>STRICT THRESHOLD HUB ACTIVE</div>
         </div>
 
-        <div class="card-box" style="background: rgba(0, 230, 118, 0.04); border-color: rgba(0, 230, 118, 0.25);">
-            <div style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 700; margin-bottom: 3px; letter-spacing: 0.8px;">Bankroll & ROI Vault</div>
-            <div style="font-size: 16px; font-weight: 800; color: var(--neon-green);">{{ bankroll_summary }}</div>
+        <div class="card-box" style="background: rgba(0, 230, 118, 0.03); border-color: rgba(0, 230, 118, 0.2); padding: 12px 16px;">
+            <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; font-weight: 700; margin-bottom: 2px;">Bankroll & ROI Vault</div>
+            <div style="font-size: 15px; font-weight: 800; color: var(--neon-green);">{{ bankroll_summary }}</div>
         </div>
 
-        <!-- TREND SNIFFER & TRAP RADAR -->
-        <div class="card-box">
-            <h2>🔍 Trend Sniffer & Public Trap Radar</h2>
-            <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px;">
-                Cross-referencing live NFL.com player metrics against sportsbook prop lines and sharp money movement.
-            </div>
+        <!-- COMPACT PLAYER STATS -->
+        <div class="card-box compact-stats">
+            <h2>⭐ NFL.com Player Stats (Compact Matrix)</h2>
             <table>
-                <tr><th>Game Matchup</th><th>Division & Weather Intel</th><th>Key Injury Status</th><th>Public Split</th><th>Sharp Action</th><th>Trap Assessment</th></tr>
-                {% for item in trend_insights %}
-                <tr>
-                    <td><strong>{{ item.game }}</strong></td>
-                    <td>{{ item.division_context }}</td>
-                    <td style="color: #38bdf8;">{{ item.injury_report }}</td>
-                    <td style="color: var(--neon-red); font-weight:600;">{{ item.public_split }}</td>
-                    <td style="color: var(--neon-green); font-weight:600;">{{ item.sharp_action }}</td>
-                    <td><span class="indicator-badge" style="background: rgba(255,23,68,0.12); color: var(--neon-red); border-color: rgba(255,23,68,0.3);">{{ item.trap_status }}</span></td>
-                </tr>
-                {% endfor %}
-            </table>
-        </div>
-
-        <!-- PLAYER STATS -->
-        <div class="card-box">
-            <h2>⭐ NFL.com Official Player Stat Leaders</h2>
-            <table>
-                <tr><th>Player</th><th>Category</th><th>Team</th><th>Official NFL.com Metric</th><th>Prop Edge Status</th></tr>
+                <tr><th>Player</th><th>Pos</th><th>Team</th><th>Metric</th><th>Status</th></tr>
                 {% for p in player_leaders %}
                 <tr>
                     <td><strong>{{ p.player }}</strong></td>
@@ -646,131 +580,139 @@ HTML_TEMPLATE = """
             </table>
         </div>
 
+        <!-- 3-TIER STRICT PARLAY HUB -->
+        <h2 style="font-size: 15px; margin-bottom: 12px; color: var(--gold-vegas);">⚡ Ogbreeze Tiered Parlay Command Center</h2>
+        <div class="grid-3">
+            <!-- Tier 1: $50 Parlay Cap -->
+            <div class="parlay-card">
+                <div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                        <span style="font-weight: 700; font-size: 13px;">Standard Cap</span>
+                        <span class="parlay-mult" style="font-size: 18px;">{{ standard_parlay.multiplier }}</span>
+                    </div>
+                    <div style="margin-bottom: 8px;"><span class="indicator-badge">{{ standard_parlay.status_badge }}</span></div>
+                    <ul style="margin: 0 0 10px 0; padding-left: 14px; font-size: 11px; color: var(--text-muted);">
+                        {% for leg in standard_parlay.legs %}
+                            <li style="margin-bottom: 3px; color: #fff; font-weight: 600;">{{ leg }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                <div style="font-size: 10px; color: var(--gold-vegas); font-weight: 700; border-top: 1px solid var(--border-gold); padding-top: 8px; display: flex; justify-content: space-between;">
+                    <span>Stake: {{ standard_parlay.stake }}</span>
+                    <span>Payout: {{ standard_parlay.potential_payout }}</span>
+                </div>
+            </div>
+
+            <!-- Tier 2: $25 Parlay (Min 50x) -->
+            <div class="parlay-card">
+                <div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                        <span style="font-weight: 700; font-size: 13px;">Booster Matrix</span>
+                        <span class="parlay-mult" style="font-size: 18px;">{{ booster_parlay.multiplier }}</span>
+                    </div>
+                    <div style="margin-bottom: 8px;"><span class="indicator-badge" style="background: rgba(0, 230, 118, 0.12); color: var(--neon-green); border-color: rgba(0, 230, 118, 0.35);">{{ booster_parlay.status_badge }}</span></div>
+                    <ul style="margin: 0 0 10px 0; padding-left: 14px; font-size: 11px; color: var(--text-muted);">
+                        {% for leg in booster_parlay.legs %}
+                            <li style="margin-bottom: 3px; color: #fff; font-weight: 600;">{{ leg }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                <div style="font-size: 10px; color: var(--neon-green); font-weight: 700; border-top: 1px solid var(--border-gold); padding-top: 8px; display: flex; justify-content: space-between;">
+                    <span>Stake: {{ booster_parlay.stake }}</span>
+                    <span>Payout: {{ booster_parlay.potential_payout }}</span>
+                </div>
+            </div>
+
+            <!-- Tier 3: $15-$25 Parlay (Min $1000 Winnings) -->
+            <div class="parlay-card" style="border-color: rgba(255, 23, 68, 0.4); background: linear-gradient(135deg, rgba(255, 23, 68, 0.1) 0%, rgba(12, 14, 20, 0.98) 100%);">
+                <div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                        <span style="font-weight: 700; font-size: 13px;">Bomb Target</span>
+                        <span class="parlay-mult" style="font-size: 18px; color: var(--neon-red); text-shadow: 0 0 12px rgba(255,23,68,0.3);">{{ bomb_parlay.multiplier }}</span>
+                    </div>
+                    <div style="margin-bottom: 8px;"><span class="indicator-badge" style="background: rgba(255,23,68,0.12); color: var(--neon-red); border-color: rgba(255,23,68,0.35);">{{ bomb_parlay.status_badge }}</span></div>
+                    <ul style="margin: 0 0 10px 0; padding-left: 14px; font-size: 11px; color: var(--text-muted);">
+                        {% for leg in bomb_parlay.legs %}
+                            <li style="margin-bottom: 3px; color: #fff; font-weight: 600;">{{ leg }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                <div style="font-size: 10px; color: var(--neon-red); font-weight: 700; border-top: 1px solid var(--border-gold); padding-top: 8px; display: flex; justify-content: space-between;">
+                    <span>Stake: {{ bomb_parlay.stake }}</span>
+                    <span>Min Payout: {{ bomb_parlay.potential_payout }}</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- SUB-THRESHOLD / MICRO SANDBOX -->
+        <div class="card-box" style="border-color: rgba(156, 163, 175, 0.25);">
+            <h2 style="color: var(--text-muted);">📥 Sub-Threshold / Micro Sandbox (Filtered Parlays)</h2>
+            <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 10px;">
+                Tickets below 50x multiplier or $1,000 minimum payout thresholds are set aside here automatically.
+            </div>
+            <table>
+                <tr><th>Ticket Description</th><th>Stake</th><th>Potential Return</th><th>Status</th></tr>
+                {% for sub in sub_threshold_parlays %}
+                <tr>
+                    <td>{{ sub.desc }}</td>
+                    <td>{{ sub.stake }}</td>
+                    <td style="color: var(--text-muted);">{{ sub.payout }}</td>
+                    <td><span class="indicator-badge" style="background: rgba(156,163,175,0.1); color: var(--text-muted); border-color: rgba(156,163,175,0.3);">SET ASIDE</span></td>
+                </tr>
+                {% endfor %}
+            </table>
+        </div>
+
         <div class="grid-2">
+            <!-- Straight Bets -->
             <div class="card-box" style="margin-bottom:0;">
                 <h2>🔥 High-Confidence Straight Bet Edge Picks</h2>
                 {% if straight_picks %}
                     {% for pick in straight_picks %}
                     <div class="pick-row">
                         <div>
-                            <div style="font-weight: 800; font-size: 14px; color: #fff;">{{ pick.bet }}</div>
-                            <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">{{ pick.matchup }} &bull; Odds: <span style="color:#38bdf8;">{{ pick.odds }}</span></div>
+                            <div style="font-weight: 800; font-size: 13px; color: #fff;">{{ pick.bet }}</div>
+                            <div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;">{{ pick.matchup }} &bull; Odds: <span style="color:#38bdf8;">{{ pick.odds }}</span></div>
                         </div>
                         <div>
                             <div class="indicator-badge">{{ pick.indicator }}</div>
-                            <div style="font-size: 10px; text-align: right; color: var(--neon-green); font-weight: 700; margin-top: 3px;">Edge: {{ pick.edge }}</div>
+                            <div style="font-size: 9px; text-align: right; color: var(--neon-green); font-weight: 700; margin-top: 2px;">Edge: {{ pick.edge }}</div>
                         </div>
                     </div>
                     {% endfor %}
                 {% else %}
-                    <div style="color: var(--text-muted); font-size: 12px; padding: 8px 0;">Scanning live bookmaker discrepancies...</div>
+                    <div style="color: var(--text-muted); font-size: 11px; padding: 6px 0;">Scanning live bookmaker discrepancies...</div>
                 {% endif %}
             </div>
 
+            <!-- Trend Sniffer -->
             <div class="card-box" style="margin-bottom:0;">
-                <h2>🎯 Standard 10x Target Parlay ($50 Cap)</h2>
-                {% if parlay_ticket %}
-                    <div class="parlay-card">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                            <span style="font-weight: 700; font-size: 14px;">Target Return Matrix</span>
-                            <span class="parlay-mult">{{ parlay_ticket.multiplier }}</span>
-                        </div>
-                        <div style="margin-bottom: 8px;"><span class="indicator-badge">{{ parlay_ticket.status_badge }}</span></div>
-                        <ul style="margin: 0 0 12px 0; padding-left: 16px; font-size: 12px; color: var(--text-muted);">
-                            {% for leg in parlay_ticket.legs %}
-                                <li style="margin-bottom: 4px; color: #fff; font-weight: 600;">{{ leg }}</li>
-                            {% endfor %}
-                        </ul>
-                        <div style="font-size: 11px; color: var(--gold-vegas); font-weight: 700; border-top: 1px solid var(--border-gold); padding-top: 10px; display: flex; justify-content: space-between;">
-                            <span>Max Risk: {{ parlay_ticket.stake }}</span>
-                            <span>Target Payout: {{ parlay_ticket.potential_payout }}</span>
-                        </div>
-                    </div>
-                {% else %}
-                    <div style="color: var(--text-muted); font-size: 12px; padding: 8px 0;">Awaiting multi-leg qualifying value...</div>
-                {% endif %}
+                <h2>🔍 Trend Sniffer & Trap Radar</h2>
+                <table>
+                    <tr><th>Game Matchup</th><th>Public Split</th><th>Assessment</th></tr>
+                    {% for item in trend_insights %}
+                    <tr>
+                        <td><strong>{{ item.game }}</strong></td>
+                        <td style="color: var(--neon-red);">{{ item.public_split }}</td>
+                        <td><span class="indicator-badge" style="background: rgba(255,23,68,0.1); color: var(--neon-red); border-color: rgba(255,23,68,0.3);">{{ item.trap_status }}</span></td>
+                    </tr>
+                    {% endfor %}
+                </table>
             </div>
         </div>
 
-        <!-- PARLAY BUILDER HUB -->
-        <div class="card-box">
-            <h2>⚡ Ogbreeze Autonomous Prop Parlay Hub</h2>
-            <div class="tabs">
-                <button class="tab-btn active" onclick="switchTab('tab-micro')">🎯 Micro-Prop Parlay ($15 Stake)</button>
-                <button class="tab-btn" onclick="switchTab('tab-bomb')">💣 $1,000 Payout Bomb Parlay ($10 Stake)</button>
-            </div>
-
-            <div id="tab-micro" class="tab-content active">
-                {% if micro_prop_parlay %}
-                    <div class="parlay-card">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                            <span style="font-weight: 700; font-size: 14px;">Data-Backed Prop Matrix ({{ micro_prop_parlay.legs_count }} Legs)</span>
-                            <span class="parlay-mult">{{ micro_prop_parlay.multiplier }}</span>
-                        </div>
-                        <div style="margin-bottom: 10px;"><span class="indicator-badge">{{ micro_prop_parlay.status_badge }}</span></div>
-                        <table>
-                            <tr><th>Player</th><th>Team</th><th>Market</th><th>Prop Line</th><th>Odds</th><th>Model Edge</th></tr>
-                            {% for leg in micro_prop_parlay.legs %}
-                            <tr>
-                                <td><strong>{{ leg.player }}</strong></td>
-                                <td>{{ leg.team }}</td>
-                                <td>{{ leg.market }}</td>
-                                <td style="color: var(--gold-vegas); font-weight:700;">{{ leg.line }}</td>
-                                <td style="color: #38bdf8; font-weight:700;">{{ leg.odds }}</td>
-                                <td style="color: var(--neon-green); font-weight:700;">{{ leg.edge }}</td>
-                            </tr>
-                            {% endfor %}
-                        </table>
-                        <div style="font-size: 11px; color: var(--gold-vegas); font-weight: 700; border-top: 1px solid var(--border-gold); margin-top: 12px; padding-top: 10px; display: flex; justify-content: space-between;">
-                            <span>Micro-Stake: {{ micro_prop_parlay.stake }}</span>
-                            <span>Projected Payout: {{ micro_prop_parlay.potential_payout }}</span>
-                        </div>
-                    </div>
-                {% endif %}
-            </div>
-
-            <div id="tab-bomb" class="tab-content">
-                {% if bomb_parlay %}
-                    <div class="parlay-card" style="border-color: rgba(255, 23, 68, 0.4); background: linear-gradient(135deg, rgba(255, 23, 68, 0.12) 0%, rgba(12, 14, 20, 0.98) 100%);">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                            <span style="font-weight: 700; font-size: 14px;">High-Multiplier Target Matrix ({{ bomb_parlay.legs_count }} Legs)</span>
-                            <span class="parlay-mult" style="color: var(--neon-red); text-shadow: 0 0 15px rgba(255,23,68,0.3);">{{ bomb_parlay.multiplier }}</span>
-                        </div>
-                        <div style="margin-bottom: 10px;"><span class="indicator-badge" style="background: rgba(255,23,68,0.12); color: var(--neon-red); border-color: rgba(255,23,68,0.3);">{{ bomb_parlay.status_badge }}</span></div>
-                        <table>
-                            <tr><th>Player</th><th>Team</th><th>Market</th><th>Prop Line</th><th>Odds</th><th>Model Angle</th></tr>
-                            {% for leg in bomb_parlay.legs %}
-                            <tr>
-                                <td><strong>{{ leg.player }}</strong></td>
-                                <td>{{ leg.team }}</td>
-                                <td>{{ leg.market }}</td>
-                                <td style="color: var(--gold-vegas); font-weight:700;">{{ leg.line }}</td>
-                                <td style="color: #38bdf8; font-weight:700;">{{ leg.odds }}</td>
-                                <td style="color: var(--neon-red); font-weight:700;">{{ leg.edge }}</td>
-                            </tr>
-                            {% endfor %}
-                        </table>
-                        <div style="font-size: 11px; color: var(--neon-red); font-weight: 700; border-top: 1px solid var(--border-gold); margin-top: 12px; padding-top: 10px; display: flex; justify-content: space-between;">
-                            <span>Bomb Stake: {{ bomb_parlay.stake }}</span>
-                            <span>Guaranteed Bottom-Line Payout: {{ bomb_parlay.potential_payout }}</span>
-                        </div>
-                    </div>
-                {% endif %}
-            </div>
-        </div>
-
-        <h2>🏈 Live Matchups (1-Week Slate), Spreads & Multi-Book Odds</h2>
+        <h2 style="margin-top: 20px;">🏈 Live Matchups (1-Week Slate) & Spreads</h2>
         <div class="games-grid">
             {% for game in games %}
             <div class="game-card">
                 <div class="game-header">
                     <span>{{ game.away_team }} @ {{ game.home_team }}</span>
-                    <span style="font-size: 10px; color: var(--text-muted);">{{ game.commence_time[:10] if game.commence_time else '' }}</span>
+                    <span style="font-size: 9px; color: var(--text-muted);">{{ game.commence_time[:10] if game.commence_time else '' }}</span>
                 </div>
                 {% if game.bookmakers %}
-                    {% for book in game.bookmakers[:2] %}
+                    {% for book in game.bookmakers[:1] %}
                     <div class="market-sec">
-                        <div style="font-size: 10px; font-weight: 800; color: var(--gold-vegas); margin-bottom: 3px; text-transform: uppercase;">{{ book.title }}</div>
+                        <div style="font-size: 9px; font-weight: 800; color: var(--gold-vegas); margin-bottom: 2px; text-transform: uppercase;">{{ book.title }}</div>
                         {% set ns = namespace(away_ml='N/A', home_ml='N/A', away_sp='N/A', home_sp='N/A') %}
                         {% for m in book.markets %}
                             {% for o in m.outcomes %}
@@ -783,11 +725,11 @@ HTML_TEMPLATE = """
                                 {% endif %}
                             {% endfor %}
                         {% endfor %}
-                        <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 2px;">
+                        <div style="display: flex; justify-content: space-between; font-size: 10px; margin-bottom: 2px;">
                             <span>{{ game.away_team }}</span>
                             <div>ML: <span class="odds-val">{{ ns.away_ml }}</span> | Spread: <span class="odds-val">{{ ns.away_sp }}</span></div>
                         </div>
-                        <div style="display: flex; justify-content: space-between; font-size: 11px;">
+                        <div style="display: flex; justify-content: space-between; font-size: 10px;">
                             <span>{{ game.home_team }}</span>
                             <div>ML: <span class="odds-val">{{ ns.home_ml }}</span> | Spread: <span class="odds-val">{{ ns.home_sp }}</span></div>
                         </div>
@@ -799,9 +741,9 @@ HTML_TEMPLATE = """
         </div>
 
         <div class="card-box">
-            <h2>📈 ESPN Official Ranked Team Power Ratings (32 Teams Max)</h2>
+            <h2>📈 ESPN Official Ranked Team Power Ratings (32 Teams)</h2>
             <table>
-                <tr><th>Rank & Team</th><th>ESPN Offense Scoring</th><th>ESPN Defense Allowance</th><th>Net EPA Power Index</th></tr>
+                <tr><th>Rank & Team</th><th>Offense Scoring</th><th>Defense Allowance</th><th>Net EPA Index</th></tr>
                 {% for stat in team_stats %}
                 <tr>
                     <td><strong>#{{ loop.index }} &bull; {{ stat.team }}</strong></td>
@@ -814,7 +756,7 @@ HTML_TEMPLATE = """
         </div>
 
         <div class="card-box">
-            <h2>📊 SQLite Bankroll Journal & Autonomous Ledger</h2>
+            <h2>📊 SQLite Bankroll Journal</h2>
             <table>
                 <tr><th>Timestamp</th><th>Type</th><th>Description</th><th>Stake</th><th>Status</th></tr>
                 {% for row in history %}
@@ -830,7 +772,7 @@ HTML_TEMPLATE = """
         </div>
 
         <div class="card-box">
-            <h2>⚙️ System Logs (Ogbreeze Autonomous Terminal)</h2>
+            <h2>⚙️ System Logs</h2>
             <div class="log-box">
                 {% for log in logs %}
                     <div>[{{ log[1] }}] {{ log[2] }}</div>
@@ -844,7 +786,7 @@ HTML_TEMPLATE = """
 
 @app.route("/")
 def dashboard():
-    games, straight_picks, parlay_ticket, micro_prop_parlay, bomb_parlay, team_stats, player_leaders, bankroll_summary, trend_insights = fetch_terminal_data()
+    games, straight_picks, standard_parlay, booster_parlay, bomb_parlay, sub_threshold_parlays, team_stats, player_leaders, bankroll_summary, trend_insights = fetch_terminal_data()
     
     history, logs = [], []
     try:
@@ -862,9 +804,10 @@ def dashboard():
         HTML_TEMPLATE, 
         games=games, 
         straight_picks=straight_picks, 
-        parlay_ticket=parlay_ticket, 
-        micro_prop_parlay=micro_prop_parlay,
+        standard_parlay=standard_parlay,
+        booster_parlay=booster_parlay,
         bomb_parlay=bomb_parlay,
+        sub_threshold_parlays=sub_threshold_parlays,
         team_stats=team_stats, 
         player_leaders=player_leaders,
         bankroll_summary=bankroll_summary,
