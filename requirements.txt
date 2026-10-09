@@ -1,0 +1,9 @@
+nfl_data_py
+pandas
+requests
+flask
+gunicorn
+fastparquet
+beautifulsoup4
+appdirs
+lxml
