@@ -175,7 +175,6 @@ def fetch_team_stats_dict():
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         
-        # Offense PPG
         off_url = "https://www.espn.com/nfl/stats/team/_/table/passing/sort/totalPointsPerGame/dir/desc"
         off_resp = requests.get(off_url, headers=headers, timeout=5)
         if off_resp.status_code == 200:
@@ -196,7 +195,6 @@ def fetch_team_stats_dict():
                                     except ValueError:
                                         pass
 
-        # Defense PPG Allowed
         def_url = "https://www.espn.com/nfl/stats/team/_/view/defense/table/passing/sort/totalPointsPerGame/dir/asc"
         def_resp = requests.get(def_url, headers=headers, timeout=5)
         if def_resp.status_code == 200:
@@ -222,8 +220,8 @@ def fetch_team_stats_dict():
     stats_map = {}
     for t in VALID_NFL_TEAMS:
         stats_map[t] = {
-            "off": off_dict.get(t, 22.0), # Higher is better offense
-            "def": def_dict.get(t, 21.0)  # Lower is better defense (fewer points allowed)
+            "off": off_dict.get(t, 22.0),
+            "def": def_dict.get(t, 21.0)
         }
     return stats_map
 
@@ -376,7 +374,6 @@ def fetch_terminal_data():
         else:
             games = raw_games[:16]
 
-    # Enrich games with better offense & defense comparison metrics
     for g in games:
         home = g.get('home_team', 'Home')
         away = g.get('away_team', 'Away')
@@ -384,11 +381,9 @@ def fetch_terminal_data():
         home_st = team_stats_map.get(home, {"off": 22.0, "def": 21.0})
         away_st = team_stats_map.get(away, {"off": 22.0, "def": 21.0})
         
-        # Offense: Higher PPG is better
         g['better_off'] = away if away_st['off'] > home_st['off'] else home
         g['better_off_stat'] = f"{max(away_st['off'], home_st['off'])} PPG"
         
-        # Defense: Lower PPG allowed is better
         g['better_def'] = away if away_st['def'] < home_st['def'] else home
         g['better_def_stat'] = f"{min(away_st['def'], home_st['def'])} PPG Allowed"
 
@@ -829,7 +824,7 @@ HTML_TEMPLATE = """
             <h2>⚙️ System Logs</h2>
             <div class="log-box">
                 {% for log in logs %}
-                    <div>[{{ log[1] ]] {{ log[2] }}</div>
+                    <div>[{{ log[1] }}] {{ log[2] }}</div>
                 {% endfor %}
             </div>
         </div>
