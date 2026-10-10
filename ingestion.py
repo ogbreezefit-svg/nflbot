@@ -1,3 +1,5 @@
+from player_research import refresh_player_research
+from research_data import refresh_team_research
 from selection_tracker import track_ticket
 from nfl_moneyline import store_moneyline_picks, settle_moneyline_picks
 import os
@@ -373,6 +375,12 @@ def fetch_and_store_live_data():
         settle_moneyline_picks()
     except Exception:
         log.exception("Moneyline settlement failed; continuing ingestion")
+    try:
+        refresh_team_research()
+        refresh_player_research()
+    except Exception:
+        log.exception("Research collection failed; existing engine unchanged")
+
     games = SportsDataAPI().get_upcoming_nfl_games()
 
     if not games:
