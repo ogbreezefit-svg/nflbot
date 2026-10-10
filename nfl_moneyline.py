@@ -141,8 +141,7 @@ def settle_moneyline_picks():
     with SessionLocal() as session:
         pending = session.query(PickLog.id).filter(
             PickLog.pick_key.startswith(PREFIX),
-            PickLog.market_key == "h2h",
-            PickLog.is_shadow.is_(True),
+            PickLog.market_key.in_(["h2h", "spreads", "totals"]),
             PickLog.status.in_(["ACTIVE", "REVIEW_REQUIRED"]),
             PickLog.settled_at.is_(None),
             PickLog.kickoff_time <= now,
@@ -201,8 +200,7 @@ def settle_moneyline_picks():
     with SessionLocal() as session:
         picks = session.query(PickLog).filter(
             PickLog.pick_key.startswith(PREFIX),
-            PickLog.market_key == "h2h",
-            PickLog.is_shadow.is_(True),
+            PickLog.market_key.in_(["h2h", "spreads", "totals"]),
             PickLog.status.in_(["ACTIVE", "REVIEW_REQUIRED"]),
             PickLog.settled_at.is_(None),
             PickLog.kickoff_time <= now,
@@ -231,9 +229,20 @@ def settle_moneyline_picks():
             if game.get("completed") is not True:
                 continue
 
-            result = grade_moneyline(
-                game, pick.pick_side, pick.picked_odds, pick.stake
-            )
+            if (
+                pick.market_key == "h2h"
+                and pick.is_shadow
+                and pick.stake is not None
+                and pick.stake > 0
+            ):
+                result = grade_moneyline(
+                    game, pick.pick_side, pick.picked_odds, pick.stake
+                )
+            else:
+                from selection_tracker import grade_selection
+                result = grade_selection(
+                    game, pick.market_key, pick.pick_side, pick.picked_line
+                )
 
             if result is None or result[0] == "REVIEW_REQUIRED":
                 pick.status = "REVIEW_REQUIRED"

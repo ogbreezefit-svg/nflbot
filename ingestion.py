@@ -1,3 +1,4 @@
+from selection_tracker import track_ticket
 from nfl_moneyline import store_moneyline_picks, settle_moneyline_picks
 import os
 import json
@@ -155,14 +156,14 @@ def build_parlay(matchups):
     db = SessionLocal()
     try:
         db.query(ParlaySlip).filter(ParlaySlip.status == "ACTIVE").update({"status": "ARCHIVED"})
-        db.add(ParlaySlip(
+        db.add(track_ticket(db, ParlaySlip(
             category="Standard Cap",
             odds=f"{multiplier}x (+{odds})" if odds > 0 else f"{multiplier}x ({odds})",
             stake="$50.00",
             payout=f"${50 * multiplier:.2f}",
             legs_json=json.dumps(legs),
             status="ACTIVE",
-        ))
+        ), matchups))
         db.commit()
         log.info("New parlay built and saved.")
     except Exception:
@@ -336,7 +337,7 @@ def build_tier_parlays(matchups):
         ).update({"status": "ARCHIVED"}, synchronize_session=False)
         for slip in slips:
             if slip is not None:
-                db.add(slip)
+                db.add(track_ticket(db, slip, matchups))
         db.commit()
         log.info("Booster / Bomb / Micro slips built and saved: %s", sum(1 for x in slips if x))
     except Exception:

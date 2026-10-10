@@ -77,7 +77,7 @@ HTML_TEMPLATE = """
     <div class="section-title">📊 Weekly Pick Record</div>
     <p style="color: #8b949e; font-size: 12px;">
         Monday–Sunday, Chicago time, grouped by game kickoff.
-        Counts stored pick records—not parlay tickets or untracked legs.
+        Counts tracked straight selections and parlay legs—not whole tickets. New selections are deduplicated by event, market, side, and line.
         Win rate excludes pushes, pending picks, and review items.
     </p>
 
