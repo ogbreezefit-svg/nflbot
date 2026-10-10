@@ -1,7 +1,7 @@
 import os
 from datetime import datetime, timezone
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean, JSON
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean, Text
 from sqlalchemy.orm import sessionmaker
 
 load_dotenv()
@@ -37,6 +37,7 @@ except ImportError:
 
 class PickLog(Base):
     __tablename__ = "picks"
+    __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True)
     player_name = Column(String, nullable=True)
@@ -57,32 +58,17 @@ class PickLog(Base):
     is_shadow = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
-# NEW: Table for the automated Parlay Slips
 class ParlaySlip(Base):
     __tablename__ = "parlays"
+    __table_args__ = {'extend_existing': True}
     
     id = Column(Integer, primary_key=True)
     category = Column(String)       # e.g., "Standard Cap", "Booster Matrix"
     odds = Column(String)           # e.g., "10.2x (+920)"
     stake = Column(String)          # e.g., "$50.00"
     payout = Column(String)         # e.g., "$510.00"
-    legs = Column(JSON)             # Stores the list of legs natively
+    legs_json = Column(Text)        # Safely stores serialized list data across Postgres/SQLite
     status = Column(String, default="ACTIVE")
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 Base.metadata.create_all(bind=engine)
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean, Text
-
-# ... (keep your existing connection setup up to ParlaySlip)
-
-class ParlaySlip(Base):
-    __tablename__ = "parlays"
-    
-    id = Column(Integer, primary_key=True)
-    category = Column(String)       
-    odds = Column(String)           
-    stake = Column(String)          
-    payout = Column(String)         
-    legs_json = Column(Text)        # Safely stores serialized list data
-    status = Column(String, default="ACTIVE")
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
