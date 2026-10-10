@@ -1,4 +1,5 @@
 from parlay_research_gate import record_parlay_research_gate
+from moneyline_observations import freeze_moneyline_observations
 from news_research import refresh_news_research
 from matchup_research import save_matchup_research
 from player_research import refresh_player_research
@@ -123,6 +124,17 @@ def parse_game(game):
             elif key == "totals" and outcome.get("name") == "Under":
                 data["under_odds"] = outcome.get("price", -110)
                 data["under_odds_real"] = outcome.get("price") is not None
+    h2h_markets = [
+        market for market in bookmakers[0].get("markets", [])
+        if isinstance(market, dict) and market.get("key") == "h2h"
+    ]
+    h2h_source = h2h_markets[0] if len(h2h_markets) == 1 else {}
+    data.update({
+        "bookmaker_key": bookmakers[0].get("key"),
+        "odds_observed_at": datetime.now(timezone.utc).isoformat(),
+        "h2h_market_last_update": h2h_source.get("last_update"),
+        "h2h_raw_outcomes": h2h_source.get("outcomes"),
+    })
     return data
 
 
@@ -433,6 +445,12 @@ def fetch_and_store_live_data():
         log.exception("Matchup research failed; existing engine unchanged")
 
     store_straight_bets(matchups)
+    try:
+        freeze_moneyline_observations(matchups)
+    except Exception:
+        log.exception(
+            "Pregame evidence capture failed; parlays remain paused"
+        )
     build_parlay(matchups)
     build_tier_parlays(matchups)
     log.info("Ingestion finished.")
