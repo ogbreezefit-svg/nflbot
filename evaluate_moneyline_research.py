@@ -151,8 +151,8 @@ def run(args):
             "Market shares are a baseline, not research-model predictions.",
             "Metrics are descriptive; they do not establish profitability.",
             "Research model training is not implemented in this tool.",
-            "Player/news inputs remain in the frozen reports but are not "
-            "converted into predictors by this export.",
+            "Player/news predictors are extracted from frozen evidence; "
+            "their presence does not establish predictive value.",
             "The configured database may differ from the deployed database.",
         ],
     }
