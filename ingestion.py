@@ -1,53 +1,47 @@
-import requests
 import os
+import requests
+from dotenv import load_dotenv
+
+load_dotenv()
 
 class SportsDataAPI:
     def __init__(self):
-        self.sleeper_cache = {}
-        self.tank_key = os.getenv("RAPIDAPI_KEY")
-        self.odds_key = os.getenv("ODDS_API_KEY")
+        self.odds_api_key = os.getenv("ODDS_API_KEY")
+        self.rapidapi_key = os.getenv("RAPIDAPI_KEY")
         
-    def get_sleeper_players(self):
-        """Fetches Sleeper NFL players dict. Keys are player_ids, values are player profiles."""
-        if not self.sleeper_cache:
-            url = "https://api.sleeper.app/v1/players/nfl"
-            response = requests.get(url)
-            response.raise_for_status()
-            self.sleeper_cache = response.json()
-        return self.sleeper_cache
-
-    def get_tank01_stats(self, year="2026"):
-        """Fetches live team stats and PPG from Tank01"""
-        url = "https://tank01-nfl-live-in-game-real-time-statistics-nfl.p.rapidapi.com/getNFLTeams"
-        headers = {
-            "x-rapidapi-host": "tank01-nfl-live-in-game-real-time-statistics-nfl.p.rapidapi.com",
-            "x-rapidapi-key": self.tank_key
-        }
-        params = {"teamStats": "true", "teamStatsSeason": year, "rosters": "false"}
-        response = requests.get(url, headers=headers, params=params)
-        return response.json().get("body", [])
+    def get_upcoming_nfl_games(self):
+        url = f"https://api.the-odds-api.com/v4/sports/americanfootball_nfl/odds/?apiKey={self.odds_api_key}&regions=us&markets=h2h,spreads,totals&oddsFormat=american"
+        response = requests.get(url)
+        if response.status_code == 200:
+            return response.json()
+        print(f"⚠️ Odds API Error (Games): {response.status_code} - {response.text}")
+        return []
 
     def get_player_props(self, event_id):
-        """Pulls DraftKings & Pinnacle prop lines from The Odds API"""
-        url = f"https://api.the-odds-api.com/v4/sports/americanfootball_nfl/events/{event_id}/odds"
-        params = {
-            "apiKey": self.odds_key,
-            "regions": "us,eu",
-            "markets": "player_pass_tds,player_pass_yds,player_rush_yds",
-            "bookmakers": "draftkings,pinnacle"
-        }
-        response = requests.get(url, params=params)
-        return response.json()
-    def get_upcoming_nfl_games(self):
-        """Fetches all upcoming NFL games and their event IDs from The Odds API."""
-        url = "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/events"
-        params = {
-            "apiKey": self.odds_key
-        }
-        try:
-            response = requests.get(url, params=params)
-            response.raise_for_status()
+        # Fetches props and game lines including h2h, spreads, totals, and half lines
+        url = f"https://api.the-odds-api.com/v4/sports/americanfootball_nfl/events/{event_id}/odds?apiKey={self.odds_api_key}&regions=us&markets=h2h,spreads,totals,h1_totals,h2_totals&oddsFormat=american"
+        response = requests.get(url)
+        if response.status_code == 200:
             return response.json()
-        except Exception as e:
-            print(f"Failed to fetch NFL schedule: {e}")
-            return []
+        print(f"⚠️ Odds API Error (Props/Lines for {event_id}): {response.status_code}")
+        return {"bookmakers": []}
+
+    def get_sleeper_players(self):
+        # Fetches NFL player rosters & injury statuses from Sleeper
+        url = "https://api.sleeper.app/v1/players/nfl"
+        response = requests.get(url)
+        if response.status_code == 200:
+            return response.json()
+        return {}
+
+    def get_tank01_stats(self, season="2026"):
+        # Tank01 API integration for team metrics
+        url = f"https://tank01-nfl-live-in-game-real-time-statistics-nfl.p.rapidapi.com/getNFLTeamStats?season={season}"
+        headers = {
+            "X-RapidAPI-Key": self.rapidapi_key,
+            "X-RapidAPI-Host": "tank01-nfl-live-in-game-real-time-statistics-nfl.p.rapidapi.com"
+        }
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            return response.json().get("body", {})
+        return {}

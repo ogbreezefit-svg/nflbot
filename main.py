@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from db import SessionLocal, PickLog
 from ingestion import SportsDataAPI
 from validator import validate_pick
@@ -28,13 +29,19 @@ def execute_shadow_mode(proposed_pick: dict = None, **kwargs):
     # 2. Pass the pick through the Pre-Flight Gatekeeper
     is_valid, reason = validate_pick(proposed_pick, sleeper_roster)
     
-    # 3. Determine a clean display name (handles single props or multi-leg parlays)
+    # 3. Determine a clean display name (with team context fallbacks)
     display_name = proposed_pick.get("player_name")
-    if not display_name and "legs" in proposed_pick:
-        leg_summaries = [f"{leg.get('market', '')} {leg.get('pick_side', '')} {leg.get('line', '')}".strip() for leg in proposed_pick.get("legs", [])]
-        display_name = " | ".join(leg_summaries) if leg_summaries else "Ogbreeze Tiered Parlay"
-    elif not display_name:
-        display_name = "System Pick / Game Total"
+    team_ctx = proposed_pick.get("team_context", "")
+    
+    # Check for empty, generic, or unassigned labels and prepend team context
+    if not display_name or display_name.startswith("Over") or display_name.startswith("Under") or " — " not in str(display_name):
+        if team_ctx and display_name:
+            display_name = f"{team_ctx} | {display_name}"
+        elif not display_name and "legs" in proposed_pick:
+            leg_summaries = [f"{leg.get('market', '')} {leg.get('pick_side', '')} {leg.get('line', '')}".strip() for leg in proposed_pick.get("legs", [])]
+            display_name = f"{team_ctx} | " + (" | ".join(leg_summaries) if leg_summaries else "Ogbreeze Tiered Parlay")
+        elif not display_name:
+            display_name = f"{team_ctx} | System Pick"
 
     # 4. Log the paper bet to the database
     new_pick = PickLog(
@@ -64,14 +71,14 @@ def execute_shadow_mode(proposed_pick: dict = None, **kwargs):
 
 if __name__ == "__main__":
     # Test execution payload if running main.py directly
-    from datetime import datetime, timezone
     sample_ticket = {
-        "player_name": "Patrick Mahomes",
-        "market": "player_pass_tds",
-        "pick_side": "OVER",
-        "line": 1.5,
+        "player_name": "Over 45.5",
+        "team_context": "KC @ BAL",
+        "market": "totals",
+        "pick_side": "Over",
+        "line": 45.5,
         "odds": -110,
         "kickoff_time": datetime.now(timezone.utc),
-        "players": ["Patrick Mahomes"]
+        "players": []
     }
     execute_shadow_mode(sample_ticket)
