@@ -134,11 +134,11 @@ def build_matchup_report(matchup, teams):
         ),
         "missing_team_evidence": missing,
         "recommendation_readiness": "INCOMPLETE",
+        "excluded_research_inputs": ["Venue", "Weather"],
         "remaining_requirements": [
             "Verified player availability and current role",
             "Recent game-level usage",
             "Timestamped player news",
-            "Actual venue and kickoff weather",
             "Required authorized NFL.com inputs",
             "Evaluated projection and selection model",
         ],
