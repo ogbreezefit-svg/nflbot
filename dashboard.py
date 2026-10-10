@@ -27,6 +27,14 @@ HTML_TEMPLATE = """
         .grid { display: flex; justify-content: space-around; background: #161b22; padding: 15px; border-radius: 8px; border: 1px solid #30363d; margin-bottom: 20px; }
         .metric { text-align: center; }
         .metric span { display: block; font-size: 20px; font-weight: bold; color: #f0f6fc; margin-top: 5px; }
+        .section-title { color: #58a6ff; font-size: 18px; margin-top: 30px; margin-bottom: 15px; border-bottom: 1px solid #30363d; padding-bottom: 5px; }
+        .parlay-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px; margin-bottom: 25px; }
+        .parlay-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 15px; }
+        .parlay-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363d; padding-bottom: 8px; margin-bottom: 10px; }
+        .parlay-title { font-weight: bold; color: #f0f6fc; }
+        .parlay-odds { color: #3fb950; font-weight: bold; }
+        .parlay-legs { list-style-type: disc; padding-left: 20px; margin: 10px 0; font-size: 13px; color: #8b949e; }
+        .parlay-footer { font-size: 12px; color: #8b949e; display: flex; justify-content: space-between; margin-top: 10px; border-top: 1px solid #30363d; padding-top: 8px; }
         table { width: 100%; border-collapse: collapse; background: #161b22; border-radius: 8px; overflow: hidden; border: 1px solid #30363d; }
         th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #30363d; font-size: 14px; }
         th { background: #21262d; color: #8b949e; }
@@ -46,6 +54,60 @@ HTML_TEMPLATE = """
         <div class="metric">Estimated ROI<span>{{ roi }}%</span></div>
     </div>
 
+    <div class="section-title">🎯 Active Parlay Slips</div>
+    <div class="parlay-grid">
+        <div class="parlay-card">
+            <div class="parlay-header">
+                <span class="parlay-title">Standard Cap</span>
+                <span class="parlay-odds">10.2x (+920)</span>
+            </div>
+            <ul class="parlay-legs">
+                <li>Las Vegas Raiders Team Total Over (Offensive PPG: 28.8)</li>
+                <li>Dak Prescott Over 245.5 Passing Yards</li>
+                <li>Game Script: High Pace & Efficiency Matchup</li>
+            </ul>
+            <div class="parlay-footer">
+                <span>Stake: $50.00</span>
+                <span>Payout: $510.00</span>
+            </div>
+        </div>
+        
+        <div class="parlay-card">
+            <div class="parlay-header">
+                <span class="parlay-title">Booster Matrix</span>
+                <span class="parlay-odds">53.5x (+5250)</span>
+            </div>
+            <ul class="parlay-legs">
+                <li>San Francisco 49ers -6.5 (Top Offense vs Defense)</li>
+                <li>Dak Prescott 2+ Passing Touchdowns</li>
+                <li>Kenneth Walker III 75+ Rushing Yards</li>
+                <li>Game Total: Seattle Seahawks vs San Francisco 49ers Over 45.5</li>
+            </ul>
+            <div class="parlay-footer">
+                <span>Stake: $25.00</span>
+                <span>Payout: $1,337.50</span>
+            </div>
+        </div>
+
+        <div class="parlay-card">
+            <div class="parlay-header">
+                <span class="parlay-title">Bomb Target</span>
+                <span class="parlay-odds">55.5x (+5450)</span>
+            </div>
+            <ul class="parlay-legs">
+                <li>Buffalo Bills -4.5 (No. 1 Scoring Offense 31.8 PPG)</li>
+                <li>Kenneth Walker III 100+ Rushing Yards & Anytime TD</li>
+                <li>Dak Prescott 3+ Pass TDs</li>
+                <li>1st Half Total: Seattle Seahawks vs Buffalo Bills Over 21.5</li>
+            </ul>
+            <div class="parlay-footer">
+                <span>Stake: $15.00</span>
+                <span>Payout: $1,000.00+</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="section-title">🔥 High-Confidence Straight Bet Edge Archive</div>
     <table>
         <tr>
             <th>ID</th>
