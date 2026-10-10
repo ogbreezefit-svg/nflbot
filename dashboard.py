@@ -3,10 +3,15 @@ from datetime import datetime, timezone
 from flask import Flask, render_template_string
 from dotenv import load_dotenv
 
+# 1. Import scheduler and ingestion
+from apscheduler.schedulers.background import BackgroundScheduler
+import ingestion
+
+# 2. Initialize Flask App FIRST
 load_dotenv()
 app = Flask(__name__)
 
-# Attempt to load database components safely
+# 3. Initialize Database
 try:
     from db import SessionLocal, PickLog, engine, Base
     Base.metadata.create_all(bind=engine)
@@ -15,6 +20,19 @@ except Exception as e:
     print(f"Database initialization warning: {e}")
     DB_AVAILABLE = False
 
+# 4. Start Background Scheduler
+try:
+    scheduler = BackgroundScheduler()
+    # Run once immediately on startup
+    ingestion.fetch_and_store_live_data()
+    # Schedule to run every hour
+    scheduler.add_job(func=ingestion.fetch_and_store_live_data, trigger="interval", minutes=60)
+    scheduler.start()
+    print("Background ingestion scheduler started.")
+except Exception as e:
+    print(f"Failed to start scheduler: {e}")
+
+# 5. HTML Template
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html>
@@ -135,6 +153,7 @@ HTML_TEMPLATE = """
 </html>
 """
 
+# 6. Routes
 @app.route("/")
 def dashboard_view():
     picks = []
@@ -163,24 +182,3 @@ def dashboard_view():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
-    from apscheduler.schedulers.background import BackgroundScheduler
-import ingestion  # Assumes ingestion.py has a main function like fetch_live_data()
-
-scheduler = BackgroundScheduler()
-# Set this to run your script every hour (or however often you need)
-scheduler.add_job(func=ingestion.fetch_live_data, trigger="interval", minutes=60)
-scheduler.start()
-from apscheduler.schedulers.background import BackgroundScheduler
-import ingestion
-
-# Start the background data ingestion (runs every 60 minutes)
-try:
-    scheduler = BackgroundScheduler()
-    # Run it once immediately on startup
-    ingestion.fetch_and_store_live_data()
-    # Then schedule it to run every hour
-    scheduler.add_job(func=ingestion.fetch_and_store_live_data, trigger="interval", minutes=60)
-    scheduler.start()
-    print("Background ingestion scheduler started.")
-except Exception as e:
-    print(f"Failed to start scheduler: {e}")
