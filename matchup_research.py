@@ -7,6 +7,7 @@ from sqlalchemy import Column, String, DateTime, Text
 from db import Base, SessionLocal
 from research_data import ResearchSnapshot, utc_time
 from matchup_features import build_matchup_report
+from news_research import load_news_context, attach_news_to_matchup
 from player_research import PlayerResearchSnapshot
 from player_matchup import summarize_player_snapshot
 
@@ -42,6 +43,7 @@ def save_matchup_research(matchups):
         if not isinstance(teams, list) or len(teams) != 32:
             raise ValueError("Team snapshot does not contain 32 teams")
 
+        news_context = load_news_context(session, now, teams)
         saved = 0
         for matchup in matchups:
             event_id = matchup.get("event_id")
@@ -103,6 +105,7 @@ def save_matchup_research(matchups):
                 else "INCOMPLETE"
             )
 
+            attach_news_to_matchup(report, news_context)
             report["team_source_fetched_at"] = source_time.isoformat()
             report["assembled_at"] = now.isoformat()
 

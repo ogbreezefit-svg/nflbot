@@ -1,3 +1,4 @@
+from news_research import refresh_news_research
 from matchup_research import save_matchup_research
 from player_research import refresh_player_research
 from research_data import refresh_team_research
@@ -381,6 +382,11 @@ def fetch_and_store_live_data():
         refresh_player_research()
     except Exception:
         log.exception("Research collection failed; existing engine unchanged")
+
+    try:
+        refresh_news_research()
+    except Exception:
+        log.exception("News collection failed; existing engine unchanged")
 
     games = SportsDataAPI().get_upcoming_nfl_games()
 
