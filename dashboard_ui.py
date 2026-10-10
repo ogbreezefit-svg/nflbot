@@ -56,6 +56,7 @@ def ticket_display(slip):
         "legs": labels,
         "display_status": slip.status or "UNKNOWN",
         "outcome": "UNTRACKED",
+        "research_label": "Not research-qualified",
         "created": display_time(slip.created_at),
     }
 
