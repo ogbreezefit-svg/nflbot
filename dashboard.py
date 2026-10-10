@@ -11,8 +11,8 @@ app = Flask(__name__)
 
 # Initialize Database safely
 try:
-    from db import SessionLocal, PickLog, ParlaySlip, engine, Base
-    Base.metadata.create_all(bind=engine)
+    from db import SessionLocal, PickLog, ParlaySlip, engine, Base, init_db
+    init_db()
     DB_AVAILABLE = True
 except Exception as e:
     print(f"Database initialization warning: {e}")
@@ -21,7 +21,14 @@ except Exception as e:
 # Safe Background Scheduler Initialization
 try:
     scheduler = BackgroundScheduler()
-    scheduler.add_job(func=ingestion.fetch_and_store_live_data, trigger="interval", minutes=60)
+    scheduler.add_job(
+        func=ingestion.fetch_and_store_live_data,
+        trigger="interval",
+        minutes=60,
+        next_run_time=datetime.now(timezone.utc),
+        max_instances=1,
+        coalesce=True,
+    )
     scheduler.start()
     print("Background ingestion scheduler started.")
 except Exception as e:
@@ -62,10 +69,10 @@ HTML_TEMPLATE = """
     <p style="text-align: center; color: #8b949e; font-size: 12px;">UTC Timestamp: {{ timestamp }}</p>
 
     <div class="grid">
-        <div class="metric">Pipeline Scans<span>{{ total_picks }}</span></div>
+        <div class="metric">Logged Picks<span>{{ total_picks }}</span></div>
         <div class="metric">Active Shadow Bets<span>{{ active_count }}</span></div>
         <div class="metric">Quarantined Gatekeeper<span>{{ quarantined_count }}</span></div>
-        <div class="metric">Estimated ROI<span>{{ roi }}%</span></div>
+        <div class="metric">Settled Straight-Bet ROI<span>{{ roi }}</span></div>
     </div>
 
     <div class="section-title">🎯 Active Parlay Slips</div>
@@ -158,10 +165,19 @@ def dashboard_view():
     active_parlays = []
     micro_parlays = []
     picks = []
+    total_picks = active_count = quarantined_count = 0
+    session = None
     
     if DB_AVAILABLE:
         try:
             session = SessionLocal()
+            total_picks = session.query(PickLog).count()
+            active_count = session.query(PickLog).filter(
+                PickLog.status == "ACTIVE", PickLog.is_shadow.is_(True)
+            ).count()
+            quarantined_count = session.query(PickLog).filter(
+                PickLog.status == "QUARANTINED"
+            ).count()
             
             # Fetch active parlays and decode their JSON legs safely in Python
             raw_parlays = session.query(ParlaySlip).filter(ParlaySlip.status == "ACTIVE").all()
@@ -179,13 +195,12 @@ def dashboard_view():
             
             # Fetch recent micro bets / straight bets for the archive ledger
             picks = session.query(PickLog).order_by(PickLog.id.desc()).limit(25).all()
-            session.close()
         except Exception as e:
             print(f"Query error: {e}")
+        finally:
+            if session is not None:
+                session.close()
 
-    total_picks = len(picks) if picks else 0
-    active_count = sum(1 for p in picks if p.status == "ACTIVE") if picks else 0
-    quarantined_count = sum(1 for p in picks if p.status == "QUARANTINED") if picks else 0
     
     return render_template_string(
         HTML_TEMPLATE,
@@ -193,7 +208,7 @@ def dashboard_view():
         total_picks=total_picks,
         active_count=active_count,
         quarantined_count=quarantined_count,
-        roi="+0.00",
+        roi="N/A (settlement pending)",
         active_parlays=active_parlays,
         micro_parlays=micro_parlays,
         picks=picks

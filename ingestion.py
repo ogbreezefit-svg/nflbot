@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 
 import requests
 from dotenv import load_dotenv
@@ -365,12 +366,35 @@ def build_tier_parlays(matchups):
         db.close()
 
 
+def filter_upcoming_games(games, now=None):
+    """Keep games starting strictly after now and within seven days."""
+    now = now or datetime.now(timezone.utc)
+    cutoff = now + timedelta(days=7)
+    upcoming = []
+    for game in games:
+        try:
+            kickoff = datetime.fromisoformat(game["commence_time"].replace("Z", "+00:00"))
+            if kickoff.tzinfo is None:
+                raise ValueError("Kickoff timestamp has no timezone")
+        except (KeyError, TypeError, ValueError, AttributeError):
+            log.warning("Skipping game with invalid kickoff: %s", game.get("id"))
+            continue
+        if now < kickoff <= cutoff:
+            upcoming.append(game)
+    return upcoming
+
+
 def fetch_and_store_live_data():
     log.info("Starting data ingestion...")
     games = SportsDataAPI().get_upcoming_nfl_games()
 
     if not games:
         log.warning("No games fetched. Skipping update to keep existing data.")
+        return
+
+    games = filter_upcoming_games(games)
+    if not games:
+        log.info("No games starting within the next seven days. Keeping existing data.")
         return
 
     matchups = [m for m in (parse_game(g) for g in games) if m]
