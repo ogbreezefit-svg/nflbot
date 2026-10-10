@@ -1,14 +1,11 @@
 """Offline experimental models; never connects to the app database."""
+from frozen_player_features import EXPANDED_FEATURE_FIELDS
 import csv
 import math
 from collections import Counter
 from datetime import datetime, timezone
 
-FEATURE_FIELDS = (
-    "home_minus_away_passing_yards_per_attempt",
-    "home_minus_away_completion_percentage",
-    "home_minus_away_rushing_yards_per_carry",
-)
+FEATURE_FIELDS = EXPANDED_FEATURE_FIELDS
 POLICY = {"train_min": 100, "calibration_min": 40, "test_min": 40,
           "min_each_class": 10}
 
@@ -56,7 +53,7 @@ def read_dataset(path, now=None):
             probability = float(raw["baseline_home_share"])
             if not math.isfinite(probability) or not 0 < probability < 1:
                 raise ValueError("Invalid market baseline")
-            if raw["feature_version"] != "moneyline-research-v1":
+            if raw["feature_version"] != "moneyline-expanded-v2":
                 raise ValueError("Unsupported feature version")
             features = []
             for field in FEATURE_FIELDS:

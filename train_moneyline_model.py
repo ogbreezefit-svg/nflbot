@@ -1,4 +1,5 @@
 """Train from an evaluator CSV only. No app imports, APIs, or database access."""
+from moneyline_trainer import FEATURE_FIELDS
 import argparse
 import csv
 import hashlib
@@ -19,13 +20,11 @@ def main():
     report = {"generated_at": now.isoformat(), "status": "NOT_FITTED",
               "production_approval": False, "parlay_gate_modified": False,
               "minimum_sample_policy": dict(POLICY),
-              "predictors": ["market_baseline_logit",
-                             "home_minus_away_passing_yards_per_attempt",
-                             "home_minus_away_completion_percentage",
-                             "home_minus_away_rushing_yards_per_carry"],
+              "predictors": ["market_baseline_logit", *FEATURE_FIELDS],
               "limitations": [
                   "Minimum sample floors are implementation policy, not evidence of reliability.",
-                  "Player/news inputs are not predictors in this experimental version.",
+                  "Player/news predictors are observed proxies, not verified availability or current-role signals.",
+                  "News variables count observed limited-feed mentions; publication times are unknown.",
                   "One fixed chronological holdout is not production validation.",
                   "No ticket construction, profitability claim, or automatic approval."]}
     bundle = None

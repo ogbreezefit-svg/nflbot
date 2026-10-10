@@ -21,7 +21,7 @@ def fixture_rows(n=240):
              "kickoff_time": start+timedelta(days=i, hours=2),
              "settled_at": start+timedelta(days=i, hours=6),
              "label": i%2, "baseline": 0.55+(i%5)*0.01,
-             "features": [float(i%7), float(i%9), None]}
+             "features": [float(i%7), float(i%9), None] + [None]*(len(FEATURE_FIELDS)-3)}
             for i in range(n)]
 
 class MoneylineTrainerTests(unittest.TestCase):
@@ -73,7 +73,7 @@ class MoneylineTrainerTests(unittest.TestCase):
     def test_no_research_variation_refused(self):
         rows = fixture_rows()
         for row in rows:
-            row["features"] = [1.0, None, None]
+            row["features"] = [1.0] + [None]*(len(FEATURE_FIELDS)-1)
         with self.assertRaises(TrainingRefused) as caught:
             chronological_plan(rows)
         self.assertEqual(caught.exception.reason, "NO_USABLE_RESEARCH_VARIATION")
