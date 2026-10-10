@@ -1,74 +1,81 @@
 import os
+import logging
 from datetime import datetime, timezone
+
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean, Text
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, declarative_base
 
 load_dotenv()
+log = logging.getLogger("ogbreeze.db")
 
-# Check if we are running locally vs on Railway
 raw_url = os.getenv("DATABASE_URL", "")
 
-# Fallback to local SQLite if DATABASE_URL is missing OR if it points to a local postgres server that isn't running
+# Use a local SQLite file if no real database is configured
 if not raw_url or "localhost" in raw_url:
     DATABASE_URL = "sqlite:///shadow_bot_test.db"
+    log.warning("No usable DATABASE_URL found. Using temporary SQLite file (data may be wiped on deploy).")
 else:
     DATABASE_URL = raw_url
 
-# Standardize Railway / Postgres URL
+# Make Railway / Heroku style Postgres URLs work with SQLAlchemy
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg2://", 1)
-elif DATABASE_URL.startswith("postgresql://") and "+psycopg" not in DATABASE_URL:
+elif DATABASE_URL.startswith("postgresql://"):
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg2://", 1)
 
-# SQLite requires 'check_same_thread: False' for testing
-engine_args = {"connect_args": {"check_same_thread": False}} if DATABASE_URL.startswith("sqlite") else {}
+if DATABASE_URL.startswith("sqlite"):
+    engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+else:
+    engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 
-engine = create_engine(DATABASE_URL, **engine_args)
 SessionLocal = sessionmaker(bind=engine)
+Base = declarative_base()
 
-try:
-    from sqlalchemy.orm import DeclarativeBase
-    class Base(DeclarativeBase):
-        pass
-except ImportError:
-    from sqlalchemy.orm import declarative_base
-    Base = declarative_base()
+
+def utcnow():
+    return datetime.now(timezone.utc)
+
 
 class PickLog(Base):
     __tablename__ = "picks"
-    __table_args__ = {'extend_existing': True}
-    
+    __table_args__ = {"extend_existing": True}
+
     id = Column(Integer, primary_key=True)
     player_name = Column(String, nullable=True)
     event_id = Column(String, nullable=True)
     market_name = Column(String)
-    pick_side = Column(String)
-    picked_line = Column(Float)
+    pick_side = Column(String, nullable=True)
+    picked_line = Column(Float, nullable=True)
     picked_odds = Column(Float, nullable=True)
-    
+
     closing_line = Column(Float, nullable=True)
     closing_odds = Column(Float, nullable=True)
     clv_edge = Column(Float, nullable=True)
-    
+
     kickoff_time = Column(DateTime(timezone=True), nullable=True)
     status = Column(String)
     quarantine_reason = Column(String, nullable=True)
     stake = Column(Float, default=50.0)
     is_shadow = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
 
 class ParlaySlip(Base):
     __tablename__ = "parlays"
-    __table_args__ = {'extend_existing': True}
-    
-    id = Column(Integer, primary_key=True)
-    category = Column(String)       # e.g., "Standard Cap", "Booster Matrix"
-    odds = Column(String)           # e.g., "10.2x (+920)"
-    stake = Column(String)          # e.g., "$50.00"
-    payout = Column(String)         # e.g., "$510.00"
-    legs_json = Column(Text)        # Safely stores serialized list data across Postgres/SQLite
-    status = Column(String, default="ACTIVE")
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    __table_args__ = {"extend_existing": True}
 
-Base.metadata.create_all(bind=engine)
+    id = Column(Integer, primary_key=True)
+    category = Column(String)
+    odds = Column(String)
+    stake = Column(String)
+    payout = Column(String)
+    legs_json = Column(Text)
+    status = Column(String, default="ACTIVE")
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+
+def init_db():
+    """Create tables if they don't exist yet."""
+    Base.metadata.create_all(bind=engine)
+    log.info("Database ready (%s)", engine.dialect.name)

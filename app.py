@@ -1,916 +1,250 @@
 import os
-import requests
-import psycopg2
-from psycopg2 import sql
-from datetime import datetime, timedelta
-from bs4 import BeautifulSoup
-from flask import Flask, render_template_string
-from flask_apscheduler import APScheduler
+import json
+import logging
+from datetime import datetime, timezone
 
+from flask import Flask, render_template_string
+from dotenv import load_dotenv
+from apscheduler.schedulers.background import BackgroundScheduler
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+log = logging.getLogger("ogbreeze")
+
+load_dotenv()
 app = Flask(__name__)
 
-# ==========================================
-# CONFIGURATION & MASTER BOT SETTINGS
-# ==========================================
-ODDS_API_KEY = os.environ.get("ODDS_API_KEY", "82dc7af21b915e1ca03b2b52118f9f13")
-DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
-DATABASE_URL = os.environ.get("DATABASE_URL")  # Pulled automatically from Railway
-SHARP_BOOK = "pinnacle"
-RETAIL_BOOKS = ["draftkings", "fanduel", "betmgm"]
-MINIMUM_EDGE_PERCENTAGE = 0.025
-
-INJURED_PLAYERS_BLACKLIST = ["CeeDee Lamb"]
-
-VALID_NFL_TEAMS = [
-    "Arizona Cardinals", "Atlanta Falcons", "Baltimore Ravens", "Buffalo Bills",
-    "Carolina Panthers", "Chicago Bears", "Cincinnati Bengals", "Cleveland Browns",
-    "Dallas Cowboys", "Denver Broncos", "Detroit Lions", "Green Bay Packers",
-    "Houston Texans", "Indianapolis Colts", "Jacksonville Jaguars", "Kansas City Chiefs",
-    "Las Vegas Raiders", "Los Angeles Chargers", "Los Angeles Rams", "Miami Dolphins",
-    "Minnesota Vikings", "New England Patriots", "New Orleans Saints", "New York Giants",
-    "New York Jets", "Philadelphia Eagles", "Pittsburgh Steelers", "San Francisco 49ers",
-    "Seattle Seahawks", "Tampa Bay Buccaneers", "Tennessee Titans", "Washington Commanders"
-]
-
-TEAM_STATS_BASELINE = {
-    "Arizona Cardinals": {"off": 21.8, "def": 24.5},
-    "Atlanta Falcons": {"off": 24.0, "def": 23.0},
-    "Baltimore Ravens": {"off": 29.0, "def": 18.4},
-    "Buffalo Bills": {"off": 31.8, "def": 19.2},
-    "Carolina Panthers": {"off": 30.3, "def": 26.8},
-    "Chicago Bears": {"off": 28.0, "def": 21.5},
-    "Cincinnati Bengals": {"off": 24.3, "def": 23.0},
-    "Cleveland Browns": {"off": 20.3, "def": 20.1},
-    "Dallas Cowboys": {"off": 27.6, "def": 22.4},
-    "Denver Broncos": {"off": 18.5, "def": 19.5},
-    "Detroit Lions": {"off": 29.8, "def": 20.2},
-    "Green Bay Packers": {"off": 18.3, "def": 20.8},
-    "Houston Texans": {"off": 21.0, "def": 19.8},
-    "Indianapolis Colts": {"off": 25.5, "def": 24.0},
-    "Jacksonville Jaguars": {"off": 26.0, "def": 23.5},
-    "Kansas City Chiefs": {"off": 29.5, "def": 17.5},
-    "Las Vegas Raiders": {"off": 28.8, "def": 21.0},
-    "Los Angeles Chargers": {"off": 16.8, "def": 18.9},
-    "Los Angeles Rams": {"off": 21.3, "def": 22.1},
-    "Miami Dolphins": {"off": 11.5, "def": 23.8},
-    "Minnesota Vikings": {"off": 21.5, "def": 19.4},
-    "New England Patriots": {"off": 16.3, "def": 22.5},
-    "New Orleans Saints": {"off": 26.3, "def": 23.2},
-    "New York Giants": {"off": 20.5, "def": 24.5},
-    "New York Jets": {"off": 19.0, "def": 20.4},
-    "Philadelphia Eagles": {"off": 18.8, "def": 19.0},
-    "Pittsburgh Steelers": {"off": 19.3, "def": 17.8},
-    "San Francisco 49ers": {"off": 30.5, "def": 18.5},
-    "Seattle Seahawks": {"off": 26.3, "def": 21.2},
-    "Tampa Bay Buccaneers": {"off": 20.0, "def": 21.9},
-    "Tennessee Titans": {"off": 13.8, "def": 24.2},
-    "Washington Commanders": {"off": 22.0, "def": 23.0}
-}
-
-# ==========================================
-# BACKGROUND CRON SCHEDULER
-# ==========================================
-app.config['SCHEDULER_API_ENABLED'] = True
-scheduler = APScheduler()
-scheduler.init_app(app)
-
-@scheduler.task('cron', id='constant_backend_intel', day_of_week='tue,thu,sat,mon', hour=8, minute=0)
-def scheduled_backend_task():
-    print("🤖 [CRON BACKEND] Running fact-checked validation pipeline...")
-    run_autonomous_research_engine()
-
-if not scheduler.running:
-    try:
-        scheduler.start()
-    except Exception:
-        pass
-
-# ==========================================
-# ODDS FORMAT CONVERSION HELPER
-# ==========================================
-def decimal_to_american(dec):
-    try:
-        d = float(dec)
-        if d >= 2.0:
-            american = (d - 1.0) * 100
-            return f"+{round(american)}"
-        elif d > 1.0:
-            american = -100 / (d - 1.0)
-            return f"{round(american)}"
-        else:
-            return str(dec)
-    except Exception:
-        return str(dec)
-
-# ==========================================
-# POSTGRESQL DATABASE ENGINE
-# ==========================================
-def get_db_connection():
-    if not DATABASE_URL:
-        return None
-    return psycopg2.connect(DATABASE_URL)
-
-def init_db():
-    conn = get_db_connection()
-    if not conn: return
-    try:
-        cursor = conn.cursor()
-        # Note: Postgres uses SERIAL instead of AUTOINCREMENT
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS bets (
-                id SERIAL PRIMARY KEY,
-                date TEXT,
-                bet_type TEXT,
-                description TEXT,
-                staked REAL,
-                potential_payout REAL,
-                status TEXT DEFAULT 'PENDING',
-                profit_loss REAL DEFAULT 0.0
-            )
-        ''')
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS bot_logs (
-                id SERIAL PRIMARY KEY,
-                timestamp TEXT,
-                message TEXT
-            )
-        ''')
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS parlay_archive (
-                id SERIAL PRIMARY KEY,
-                timestamp TEXT,
-                tier TEXT,
-                stake TEXT,
-                multiplier TEXT,
-                potential_payout TEXT,
-                legs TEXT
-            )
-        ''')
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS straight_archive (
-                id SERIAL PRIMARY KEY,
-                timestamp TEXT,
-                matchup TEXT,
-                bet_desc TEXT,
-                odds TEXT,
-                edge TEXT,
-                indicator TEXT
-            )
-        ''')
-        conn.commit()
-    except Exception as e:
-        print(f"DB Init Error: {e}")
-    finally:
-        if conn: conn.close()
-
-def log_bet(bet_type, description, staked, potential_payout):
-    conn = get_db_connection()
-    if not conn: return
-    try:
-        cursor = conn.cursor()
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        # Note: Postgres uses %s for variables, not ?
-        cursor.execute("SELECT COUNT(*) FROM bets WHERE description = %s AND date LIKE %s", (description, f"{today_str}%"))
-        if cursor.fetchone()[0] == 0:
-            date_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            cursor.execute('''
-                INSERT INTO bets (date, bet_type, description, staked, potential_payout, status)
-                VALUES (%s, %s, %s, %s, %s, 'PENDING')
-            ''', (date_str, bet_type, description, staked, potential_payout))
-            conn.commit()
-    except Exception as e:
-        print(f"Log Bet Error: {e}")
-    finally:
-        if conn: conn.close()
-
-def log_system_event(message):
-    conn = get_db_connection()
-    if not conn: return
-    try:
-        cursor = conn.cursor()
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        cursor.execute("INSERT INTO bot_logs (timestamp, message) VALUES (%s, %s)", (timestamp, message))
-        conn.commit()
-    except Exception as e:
-        pass
-    finally:
-        if conn: conn.close()
-
-def log_parlay_archive(tier, stake, multiplier, payout, legs):
-    conn = get_db_connection()
-    if not conn: return
-    try:
-        cursor = conn.cursor()
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        legs_str = " | ".join(legs) if isinstance(legs, list) else str(legs)
-        cursor.execute("SELECT COUNT(*) FROM parlay_archive WHERE tier = %s AND legs = %s AND timestamp LIKE %s", (tier, legs_str, f"{today_str}%"))
-        if cursor.fetchone()[0] == 0:
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            cursor.execute('''
-                INSERT INTO parlay_archive (timestamp, tier, stake, multiplier, potential_payout, legs)
-                VALUES (%s, %s, %s, %s, %s, %s)
-            ''', (timestamp, tier, stake, multiplier, payout, legs_str))
-            conn.commit()
-    except Exception as e:
-        pass
-    finally:
-        if conn: conn.close()
-
-def log_straight_archive(matchup, bet_desc, odds, edge, indicator):
-    conn = get_db_connection()
-    if not conn: return
-    try:
-        cursor = conn.cursor()
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        cursor.execute("SELECT COUNT(*) FROM straight_archive WHERE matchup = %s AND bet_desc = %s AND timestamp LIKE %s", (matchup, bet_desc, f"{today_str}%"))
-        if cursor.fetchone()[0] == 0:
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            cursor.execute('''
-                INSERT INTO straight_archive (timestamp, matchup, bet_desc, odds, edge, indicator)
-                VALUES (%s, %s, %s, %s, %s, %s)
-            ''', (timestamp, matchup, bet_desc, odds, edge, indicator))
-            conn.commit()
-    except Exception as e:
-        pass
-    finally:
-        if conn: conn.close()
-
-def calculate_roi():
-    conn = get_db_connection()
-    if not conn: return 0.0, 0.0, 0.0
-    try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT SUM(staked), SUM(profit_loss) FROM bets WHERE status != 'PENDING'")
-        res = cursor.fetchone()
-        total_staked = res[0] or 0.0
-        total_profit = res[1] or 0.0
-        roi = (total_profit / total_staked * 100) if total_staked > 0 else 0.0
-        return total_staked, total_profit, round(roi, 2)
-    except Exception as e:
-        return 0.0, 0.0, 0.0
-    finally:
-        if conn: conn.close()
-
-# ==========================================
-# STATS & INJURY FILTERING
-# ==========================================
-def fetch_team_stats_dict():
-    return TEAM_STATS_BASELINE.copy()
-
-def fetch_healthy_player_leaders():
-    raw_leaders = []
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-    urls = {
-        "Passing": "https://www.nfl.com/stats/player-stats/category/passing/2026/reg/all/passingyards/desc",
-        "Rushing": "https://www.nfl.com/stats/player-stats/category/rushing/2026/reg/all/rushingyards/desc",
-        "Receiving": "https://www.nfl.com/stats/player-stats/category/receiving/2026/reg/all/receivingreceptions/desc"
-    }
-    try:
-        for cat, url in urls.items():
-            resp = requests.get(url, headers=headers, timeout=5)
-            if resp.status_code == 200:
-                soup = BeautifulSoup(resp.text, 'html.parser')
-                tables = soup.find_all('table')
-                for table in tables:
-                    rows = table.find_all('tr')
-                    for row in rows[:2]:
-                        cols = [c.get_text(strip=True) for c in row.find_all(['td', 'th'])]
-                        if len(cols) >= 2 and cols[0] not in ['Player', '']:
-                            player_name = cols[0]
-                            if player_name not in INJURED_PLAYERS_BLACKLIST:
-                                raw_leaders.append({
-                                    "player": player_name,
-                                    "position": cat[:-1],
-                                    "team": "NFL",
-                                    "stat_line": f"{cat}: {cols[1]}",
-                                    "model_proj": "EDGE OK"
-                                })
-        if raw_leaders:
-            return raw_leaders
-    except Exception:
-        pass
-
-    fallback = [
-        {"player": "Dak Prescott", "position": "QB", "team": "Dallas Cowboys", "stat_line": "Passing: 1,381 Yds", "model_proj": "EDGE OK"},
-        {"player": "Kenneth Walker III", "position": "RB", "team": "Seattle Seahawks", "stat_line": "Rushing: 537 Yds", "model_proj": "EDGE OK"},
-        {"player": "Josh Allen", "position": "QB", "team": "Buffalo Bills", "stat_line": "Passing: 1,420 Yds", "model_proj": "EDGE OK"}
-    ]
-    return [p for p in fallback if p['player'] not in INJURED_PLAYERS_BLACKLIST]
-
-def run_autonomous_research_engine():
-    log_system_event("Autonomous Research Engine active with PostgreSQL backend.")
-
-def run_trend_sniffer():
-    return [
-        {
-            "game": "Las Vegas Raiders @ Kansas City Chiefs",
-            "division_context": "AFC West Rivalry | Arrowhead Weather: 58°F",
-            "injury_report": "Raiders offense verified fully healthy.",
-            "public_split": "74% Public on Chiefs",
-            "sharp_action": "Sharp reverse action on Raiders offense.",
-            "trap_status": "🚨 PUBLIC TRAP"
-        }
-    ]
-
-# ==========================================
-# FACT-CHECKED PARLAY BUILDER
-# ==========================================
-def build_validated_parlays(games, team_stats_map, player_leaders):
-    qb_name = player_leaders[0]['player'] if len(player_leaders) > 0 else "Josh Allen"
-    rb_name = player_leaders[1]['player'] if len(player_leaders) > 1 else "Kenneth Walker III"
-
-    standard_legs = [
-        "Las Vegas Raiders Team Total Over (Offensive PPG: 28.8)",
-        f"{qb_name} Over 245.5 Passing Yards",
-        "Game Script: High Pace & Efficiency Matchup"
-    ]
-    standard_parlay = {
-        "stake": "$50.00",
-        "multiplier": "10.2x (+920)",
-        "potential_payout": "$510.00",
-        "status_badge": "🎯 $50 CAP STANDARD PARLAY",
-        "legs": standard_legs
-    }
-    log_parlay_archive("Standard Cap ($50)", "$50.00", "10.2x (+920)", "$510.00", standard_legs)
-
-    booster_mult = 53.5
-    booster_legs = [
-        "San Francisco 49ers -6.5 (Top Offense 30.5 PPG vs Defense)",
-        f"{qb_name} 2+ Passing Touchdowns",
-        f"{rb_name} 75+ Rushing Yards",
-        "Over 45.5 Game Total"
-    ]
-    booster_payout = f"${25.0 * booster_mult:,.2f}"
-    booster_parlay = {
-        "stake": "$25.00",
-        "multiplier": f"{booster_mult}x (+5250)",
-        "potential_payout": booster_payout,
-        "status_badge": "⚡ $25 BOOSTER (50x+ TARGET)",
-        "legs": booster_legs
-    }
-    log_parlay_archive("Booster Tier ($25, 50x+)", "$25.00", f"{booster_mult}x (+5250)", booster_payout, booster_legs)
-
-    bomb_stake = 20.0
-    bomb_mult = 55.5 
-    bomb_legs = [
-        "Buffalo Bills -4.5 (No. 1 Scoring Offense 31.8 PPG)",
-        f"{rb_name} 100+ Rushing Yards & Anytime TD",
-        f"{qb_name} 3+ Pass TDs",
-        "1st Half Total Over 21.5"
-    ]
-    bomb_payout = f"${bomb_stake * bomb_mult:,.2f}"
-    bomb_parlay = {
-        "stake": f"${bomb_stake:.2f}",
-        "multiplier": f"{bomb_mult}x (+5450)",
-        "potential_payout": bomb_payout,
-        "status_badge": "💣 $15-$25 BOMB ($1,000+ MIN WIN)",
-        "legs": bomb_legs
-    }
-    log_parlay_archive("Bomb Target ($15-$25, $1k+ Win)", f"${bomb_stake:.2f}", f"{bomb_mult}x (+5450)", bomb_payout, bomb_legs)
-
-    sub_threshold_parlays = [
-        {"desc": f"Micro SGP: {qb_name} 200+ Pass Yds & Team Win (+170 odds)", "stake": "$15.00", "payout": "$40.50", "mult": "2.70x"},
-        {"desc": "Divisional 2-Leg: Baltimore Ravens -2.5 & Under 48.5 (+205 odds)", "stake": "$10.00", "payout": "$30.50", "mult": "3.05x"}
-    ]
-    for sub in sub_threshold_parlays:
-        log_parlay_archive("Sub-Threshold Sandbox", sub["stake"], sub["mult"], sub["payout"], [sub["desc"]])
-
-    return standard_parlay, booster_parlay, bomb_parlay, sub_threshold_parlays
-
-# ==========================================
-# FLASK WEB SERVER & VEGAS TERMINAL UI
-# ==========================================
-def fetch_terminal_data():
+# ---------- Database ----------
+try:
+    from db import SessionLocal, PickLog, ParlaySlip, engine, init_db
     init_db()
-    run_autonomous_research_engine()
-    trend_insights = run_trend_sniffer()
-    team_stats_map = fetch_team_stats_dict()
-    player_leaders = fetch_healthy_player_leaders()
+    DB_AVAILABLE = True
+except Exception:
+    log.exception("DATABASE INIT FAILED")
+    DB_AVAILABLE = False
 
-    url = "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/odds"
-    params = {
-        "apiKey": ODDS_API_KEY,
-        "regions": "us",
-        "markets": "h2h,spreads",
-        "oddsFormat": "decimal",
-        "bookmakers": "pinnacle,draftkings,fanduel,betmgm"
-    }
-    raw_games = []
+# ---------- Ingestion + scheduler ----------
+try:
+    import ingestion
+except Exception:
+    log.exception("COULD NOT IMPORT ingestion.py")
+    ingestion = None
+
+
+def run_ingestion():
+    if ingestion is None:
+        log.error("Ingestion module not loaded.")
+        return
     try:
-        response = requests.get(url, params=params, timeout=10)
-        if response.status_code == 200:
-            raw_games = response.json()
+        ingestion.fetch_and_store_live_data()
     except Exception:
-        pass
+        log.exception("INGESTION FAILED")
 
-    # STRICT 7-DAY WINDOW FILTER
-    games = []
-    if raw_games:
-        now_dt = datetime.now()
-        max_dt = now_dt + timedelta(days=7)
-        for g in raw_games:
-            commence_str = g.get('commence_time')
-            if commence_str:
-                try:
-                    g_dt = datetime.strptime(commence_str[:19], "%Y-%m-%dT%H:%M:%S")
-                    if now_dt <= g_dt <= max_dt:
-                        games.append(g)
-                except Exception:
-                    pass
-        if not games:
-            games = [g for g in raw_games if g.get('commence_time')][:12]
 
-    for g in games:
-        home = g.get('home_team', 'Home')
-        away = g.get('away_team', 'Away')
-        
-        home_st = team_stats_map.get(home, {"off": 22.0, "def": 21.0})
-        away_st = team_stats_map.get(away, {"off": 22.0, "def": 21.0})
-        
-        if away_st['off'] > home_st['off']:
-            g['better_off'] = away
-            g['better_off_stat'] = f"{away_st['off']} PPG"
-        else:
-            g['better_off'] = home
-            g['better_off_stat'] = f"{home_st['off']} PPG"
-            
-        if away_st['def'] < home_st['def']:
-            g['better_def'] = away
-            g['better_def_stat'] = f"{away_st['def']} PPG Allowed"
-        else:
-            g['better_def'] = home
-            g['better_def_stat'] = f"{home_st['def']} PPG Allowed"
+try:
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(
+        func=run_ingestion,
+        trigger="interval",
+        hours=6,                                # saves Odds API credits
+        next_run_time=datetime.now(timezone.utc),  # also run once at startup
+        max_instances=1,
+    )
+    scheduler.start()
+    log.info("Background ingestion scheduler started.")
+except Exception:
+    log.exception("SCHEDULER FAILED TO START")
 
-    standard_parlay, booster_parlay, bomb_parlay, sub_threshold_parlays = build_validated_parlays(games, team_stats_map, player_leaders)
-
-    straight_picks = []
-    for game in games:
-        home = game.get('home_team', 'Home')
-        away = game.get('away_team', 'Away')
-        books = game.get('bookmakers', [])
-        sharp_home, retail_best, best_book = 0.0, 0.0, "DraftKings"
-        for book in books:
-            b_key = book.get('key')
-            for market in book.get('markets', []):
-                if market.get('key') == 'h2h':
-                    for o in market.get('outcomes', []):
-                        if o.get('name') == home:
-                            price = o.get('price', 0.0)
-                            if b_key == "pinnacle":
-                                sharp_home = price
-                            elif b_key in ["draftkings", "fanduel", "betmgm"] and price > retail_best:
-                                retail_best = price
-                                best_book = book.get('title', 'Retail Book')
-
-        if sharp_home > 0 and retail_best > 0:
-            edge = (1.0 / sharp_home) - (1.0 / retail_best)
-            if edge >= MINIMUM_EDGE_PERCENTAGE:
-                edge_pct = round(edge * 100, 1)
-                bet_desc = f"{home} Moneyline on {best_book} (+{edge_pct}% Edge)"
-                matchup_str = f"{away} @ {home}"
-                odds_str = decimal_to_american(retail_best)
-                edge_str = f"+{edge_pct}%"
-                indicator_str = "🔥 HIGH VALUE" if edge >= 0.04 else "⚡ SHARP EDGE"
-                
-                straight_picks.append({
-                    "matchup": matchup_str,
-                    "bet": bet_desc,
-                    "odds": odds_str,
-                    "edge": edge_str,
-                    "indicator": indicator_str
-                })
-                log_bet("Straight Edge Pick", bet_desc, 50.0, round(50.0 * retail_best, 2))
-                log_straight_archive(matchup_str, bet_desc, odds_str, edge_str, indicator_str)
-
-    total_staked, total_profit, roi = calculate_roi()
-    bankroll_summary = f"Total Staked: ${total_staked:,.2f} | Net Profit: ${total_profit:,.2f} | ROI: {roi}%"
-
-    return games, straight_picks, standard_parlay, booster_parlay, bomb_parlay, sub_threshold_parlays, player_leaders, bankroll_summary, trend_insights
-
+# ---------- Page template ----------
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>OGBREEZE PARLAYS | Strict Threshold Terminal</title>
+    <title>Ogbreeze Command Center</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <meta http-equiv="refresh" content="30">
     <style>
-        :root {
-            --bg-obsidian: #040507;
-            --bg-velvet: #0c0e14;
-            --gold-vegas: #d4af37;
-            --gold-glow: rgba(212, 175, 55, 0.3);
-            --neon-green: #00e676;
-            --neon-red: #ff1744;
-            --text-main: #f3f4f6;
-            --text-muted: #9ca3af;
-            --border-gold: rgba(212, 175, 55, 0.22);
-            --card-glass: rgba(12, 14, 20, 0.92);
-        }
-        body { 
-            font-family: 'Plus Jakarta Sans', sans-serif; 
-            background: var(--bg-obsidian); 
-            color: var(--text-main); 
-            margin: 0; 
-            padding: 16px; 
-            background-image: radial-gradient(circle at 50% 0%, #17140a 0%, var(--bg-obsidian) 75%); 
-            min-height: 100vh; 
-        }
-        .container { max-width: 1200px; margin: auto; }
-        
-        .header { 
-            display: flex; 
-            justify-content: space-between; 
-            align-items: center; 
-            background: var(--card-glass); 
-            backdrop-filter: blur(16px); 
-            border: 1px solid var(--border-gold); 
-            padding: 15px 22px; 
-            border-radius: 12px; 
-            margin-bottom: 16px; 
-            box-shadow: 0 8px 25px rgba(0,0,0,0.6); 
-        }
-        .logo { font-size: 20px; font-weight: 800; letter-spacing: 1.2px; color: #fff; display: flex; align-items: center; gap: 8px; }
-        .logo span { color: var(--gold-vegas); text-shadow: 0 0 15px var(--gold-glow); font-family: serif; }
-        
-        .live-badge { 
-            display: flex; 
-            align-items: center; 
-            gap: 6px; 
-            background: rgba(0, 230, 118, 0.12); 
-            color: var(--neon-green); 
-            padding: 5px 12px; 
-            border-radius: 30px; 
-            font-size: 11px; 
-            font-weight: 700; 
-            border: 1px solid rgba(0, 230, 118, 0.35); 
-        }
-        .pulse { width: 6px; height: 6px; background: var(--neon-green); border-radius: 50%; box-shadow: 0 0 8px var(--neon-green); animation: pulse 2s infinite; }
-        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; } }
-        
-        h2 { 
-            font-size: 13px; 
-            font-weight: 700; 
-            text-transform: uppercase; 
-            letter-spacing: 0.9px; 
-            color: var(--gold-vegas); 
-            margin-top: 0; 
-            margin-bottom: 12px; 
-            display: flex; 
-            align-items: center; 
-            gap: 6px; 
-        }
-        
-        .grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; margin-bottom: 16px; }
-        .grid-2 { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 16px; margin-bottom: 16px; }
-        @media (max-width: 950px) { .grid-2, .grid-3 { grid-template-columns: 1fr; } }
-        
-        .card-box { 
-            background: var(--card-glass); 
-            backdrop-filter: blur(16px); 
-            border: 1px solid var(--border-gold); 
-            border-radius: 12px; 
-            padding: 16px; 
-            margin-bottom: 16px; 
-            box-shadow: 0 8px 20px rgba(0,0,0,0.4); 
-        }
-        
-        .compact-stats { padding: 10px 14px; margin-bottom: 16px; }
-        .compact-stats table th, .compact-stats table td { padding: 6px 8px; font-size: 11px; }
-
-        .indicator-badge { 
-            background: rgba(212, 175, 55, 0.12); 
-            color: var(--gold-vegas); 
-            padding: 3px 8px; 
-            border-radius: 5px; 
-            font-size: 10px; 
-            font-weight: 800; 
-            border: 1px solid rgba(212, 175, 55, 0.35); 
-        }
-        
-        .parlay-card { 
-            background: linear-gradient(135deg, rgba(212, 175, 55, 0.1) 0%, rgba(12, 14, 20, 0.98) 100%); 
-            border: 1px solid rgba(212, 175, 55, 0.4); 
-            border-radius: 12px; 
-            padding: 16px; 
-            height: 100%;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-        }
-        .parlay-mult { font-size: 22px; font-weight: 800; color: var(--gold-vegas); text-shadow: 0 0 12px var(--gold-glow); }
-        
-        .games-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; margin-bottom: 16px; }
-        .game-card { 
-            background: var(--card-glass); 
-            border: 1px solid var(--border-gold); 
-            border-radius: 12px; 
-            padding: 14px; 
-            position: relative; 
-            overflow: hidden; 
-        }
-        .game-card::before { content: ''; position: absolute; top: 0; left: 0; width: 3px; height: 100%; background: var(--gold-vegas); }
-        .game-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; border-bottom: 1px solid var(--border-gold); padding-bottom: 5px; font-weight: 800; font-size: 12px; }
-        .market-sec { background: rgba(0,0,0,0.3); border-radius: 6px; padding: 6px 8px; margin-bottom: 6px; border: 1px solid rgba(255,255,255,0.04); }
-        .odds-val { color: #38bdf8; font-weight: 700; }
-        
-        table { width: 100%; border-collapse: collapse; margin-top: 6px; }
-        th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border-gold); font-size: 11px; }
-        th { color: var(--gold-vegas); font-weight: 700; text-transform: uppercase; font-size: 9px; letter-spacing: 0.8px; }
-        td { color: #e5e7eb; }
-        
-        .log-box { 
-            background: #020305; 
-            padding: 10px 12px; 
-            border-radius: 6px; 
-            color: var(--neon-green); 
-            font-family: monospace; 
-            font-size: 10px; 
-            max-height: 120px; 
-            overflow-y: auto; 
-            border: 1px solid rgba(0, 230, 118, 0.2); 
-        }
+        body { background-color: #0d1117; color: #c9d1d9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; }
+        h1 { color: #58a6ff; text-align: center; font-size: 24px; border-bottom: 1px solid #30363d; padding-bottom: 15px; }
+        .grid { display: flex; justify-content: space-around; flex-wrap: wrap; gap: 10px; background: #161b22; padding: 15px; border-radius: 8px; border: 1px solid #30363d; margin-bottom: 20px; }
+        .metric { text-align: center; }
+        .metric span { display: block; font-size: 20px; font-weight: bold; color: #f0f6fc; margin-top: 5px; }
+        .section-title { color: #58a6ff; font-size: 18px; margin-top: 30px; margin-bottom: 15px; border-bottom: 1px solid #30363d; padding-bottom: 5px; }
+        .parlay-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px; margin-bottom: 25px; }
+        .parlay-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 15px; }
+        .parlay-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363d; padding-bottom: 8px; margin-bottom: 10px; }
+        .parlay-title { font-weight: bold; color: #f0f6fc; }
+        .parlay-odds { color: #3fb950; font-weight: bold; }
+        .parlay-legs { list-style-type: disc; padding-left: 20px; margin: 10px 0; font-size: 13px; color: #8b949e; }
+        .parlay-footer { font-size: 12px; color: #8b949e; display: flex; justify-content: space-between; margin-top: 10px; border-top: 1px solid #30363d; padding-top: 8px; }
+        .table-wrap { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; background: #161b22; border-radius: 8px; overflow: hidden; border: 1px solid #30363d; }
+        th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #30363d; font-size: 14px; }
+        th { background: #21262d; color: #8b949e; }
+        .badge-active { color: #3fb950; font-weight: bold; }
+        .badge-archived { color: #8b949e; font-weight: bold; }
+        .badge-blocked { color: #f85149; font-weight: bold; }
+        .badge-won { color: #58a6ff; font-weight: bold; }
+        .empty-state { text-align: center; color: #8b949e; padding: 20px; font-style: italic; }
+        .warn { background: #3d1f1f; border: 1px solid #f85149; color: #f85149; padding: 10px; border-radius: 8px; text-align: center; margin-bottom: 15px; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <div class="logo">🎲 OGBREEZE <span>PARLAYS TERMINAL</span></div>
-            <div class="live-badge"><div class="pulse"></div>POSTGRESQL ENGINE ACTIVE</div>
-        </div>
+    <h1>⚡ OGBREEZE TIERED PARLAY &amp; SHADOW COMMAND CENTER ⚡</h1>
+    <p style="text-align: center; color: #8b949e; font-size: 12px;">UTC Timestamp: {{ timestamp }}</p>
 
-        <div class="card-box" style="background: rgba(0, 230, 118, 0.03); border-color: rgba(0, 230, 118, 0.2); padding: 12px 16px;">
-            <div style="font-size: 10px; color: var(--text-muted); text-transform: uppercase; font-weight: 700; margin-bottom: 2px;">Bankroll & ROI Vault</div>
-            <div style="font-size: 15px; font-weight: 800; color: var(--neon-green);">{{ bankroll_summary }}</div>
-        </div>
+    {% if not db_available %}
+    <div class="warn">Database is not connected. Check your logs and visit /debug</div>
+    {% endif %}
 
-        <!-- COMPACT PLAYER STATS -->
-        <div class="card-box compact-stats">
-            <h2>⭐ Healthy NFL Player Stats (Injury Screened)</h2>
-            <table>
-                <tr><th>Player</th><th>Pos</th><th>Team</th><th>Metric</th><th>Status</th></tr>
-                {% for p in player_leaders %}
-                <tr>
-                    <td><strong>{{ p.player }}</strong></td>
-                    <td><span class="indicator-badge">{{ p.position }}</span></td>
-                    <td>{{ p.team }}</td>
-                    <td style="color: var(--gold-vegas); font-weight:700;">{{ p.stat_line }}</td>
-                    <td style="color: var(--neon-green); font-weight:700;">{{ p.model_proj }}</td>
-                </tr>
-                {% endfor %}
-            </table>
-        </div>
+    <div class="grid">
+        <div class="metric">Total Picks<span>{{ total_picks }}</span></div>
+        <div class="metric">Active Shadow Bets<span>{{ active_count }}</span></div>
+        <div class="metric">Quarantined<span>{{ quarantined_count }}</span></div>
+        <div class="metric">Estimated ROI<span>{{ roi }}%</span></div>
+    </div>
 
-        <!-- 3-TIER STRICT PARLAY HUB -->
-        <h2 style="font-size: 15px; margin-bottom: 12px; color: var(--gold-vegas);">⚡ Ogbreeze Tiered Parlay Command Center</h2>
-        <div class="grid-3">
+    <div class="section-title">🎯 Active Parlay Slips</div>
+    <div class="parlay-grid">
+        {% if active_parlays %}
+            {% for parlay in active_parlays %}
             <div class="parlay-card">
-                <div>
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                        <span style="font-weight: 700; font-size: 13px;">Standard Cap</span>
-                        <span class="parlay-mult" style="font-size: 18px;">{{ standard_parlay.multiplier }}</span>
-                    </div>
-                    <div style="margin-bottom: 8px;"><span class="indicator-badge">{{ standard_parlay.status_badge }}</span></div>
-                    <ul style="margin: 0 0 10px 0; padding-left: 14px; font-size: 11px; color: var(--text-muted);">
-                        {% for leg in standard_parlay.legs %}
-                            <li style="margin-bottom: 3px; color: #fff; font-weight: 600;">{{ leg }}</li>
-                        {% endfor %}
-                    </ul>
+                <div class="parlay-header">
+                    <span class="parlay-title">{{ parlay.category }}</span>
+                    <span class="parlay-odds">{{ parlay.odds }}</span>
                 </div>
-                <div style="font-size: 10px; color: var(--gold-vegas); font-weight: 700; border-top: 1px solid var(--border-gold); padding-top: 8px; display: flex; justify-content: space-between;">
-                    <span>Stake: {{ standard_parlay.stake }}</span>
-                    <span>Payout: {{ standard_parlay.potential_payout }}</span>
-                </div>
-            </div>
-
-            <div class="parlay-card">
-                <div>
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                        <span style="font-weight: 700; font-size: 13px;">Booster Matrix</span>
-                        <span class="parlay-mult" style="font-size: 18px;">{{ booster_parlay.multiplier }}</span>
-                    </div>
-                    <div style="margin-bottom: 8px;"><span class="indicator-badge" style="background: rgba(0, 230, 118, 0.12); color: var(--neon-green); border-color: rgba(0, 230, 118, 0.35);">{{ booster_parlay.status_badge }}</span></div>
-                    <ul style="margin: 0 0 10px 0; padding-left: 14px; font-size: 11px; color: var(--text-muted);">
-                        {% for leg in booster_parlay.legs %}
-                            <li style="margin-bottom: 3px; color: #fff; font-weight: 600;">{{ leg }}</li>
-                        {% endfor %}
-                    </ul>
-                </div>
-                <div style="font-size: 10px; color: var(--neon-green); font-weight: 700; border-top: 1px solid var(--border-gold); padding-top: 8px; display: flex; justify-content: space-between;">
-                    <span>Stake: {{ booster_parlay.stake }}</span>
-                    <span>Payout: {{ booster_parlay.potential_payout }}</span>
-                </div>
-            </div>
-
-            <div class="parlay-card" style="border-color: rgba(255, 23, 68, 0.4); background: linear-gradient(135deg, rgba(255, 23, 68, 0.1) 0%, rgba(12, 14, 20, 0.98) 100%);">
-                <div>
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                        <span style="font-weight: 700; font-size: 13px;">Bomb Target</span>
-                        <span class="parlay-mult" style="font-size: 18px; color: var(--neon-red); text-shadow: 0 0 12px rgba(255,23,68,0.3);">{{ bomb_parlay.multiplier }}</span>
-                    </div>
-                    <div style="margin-bottom: 8px;"><span class="indicator-badge" style="background: rgba(255, 23, 68, 0.12); color: var(--neon-red); border-color: rgba(255, 23, 68, 0.35);">{{ bomb_parlay.status_badge }}</span></div>
-                    <ul style="margin: 0 0 10px 0; padding-left: 14px; font-size: 11px; color: var(--text-muted);">
-                        {% for leg in bomb_parlay.legs %}
-                            <li style="margin-bottom: 3px; color: #fff; font-weight: 600;">{{ leg }}</li>
-                        {% endfor %}
-                    </ul>
-                </div>
-                <div style="font-size: 10px; color: var(--neon-red); font-weight: 700; border-top: 1px solid var(--border-gold); padding-top: 8px; display: flex; justify-content: space-between;">
-                    <span>Stake: {{ bomb_parlay.stake }}</span>
-                    <span>Min Payout: {{ bomb_parlay.potential_payout }}</span>
-                </div>
-            </div>
-        </div>
-
-        <!-- SUB-THRESHOLD / MICRO SANDBOX -->
-        <div class="card-box" style="border-color: rgba(156, 163, 175, 0.25);">
-            <h2 style="color: var(--text-muted);">📥 Sub-Threshold / Micro Sandbox (Filtered Parlays)</h2>
-            <table>
-                <tr><th>Ticket Description</th><th>Stake</th><th>Multiplier</th><th>Potential Return</th><th>Status</th></tr>
-                {% for sub in sub_threshold_parlays %}
-                <tr>
-                    <td>{{ sub.desc }}</td>
-                    <td>{{ sub.stake }}</td>
-                    <td style="color: #38bdf8;">{{ sub.mult }}</td>
-                    <td style="color: var(--neon-green); font-weight:700;">{{ sub.payout }}</td>
-                    <td><span class="indicator-badge" style="background: rgba(156,163,175,0.1); color: var(--text-muted); border-color: rgba(156,163,175,0.3);">SET ASIDE</span></td>
-                </tr>
-                {% endfor %}
-            </table>
-        </div>
-
-        <!-- PERMANENT PARLAY ARCHIVE VAULT -->
-        <div class="card-box" style="border-color: rgba(212, 175, 55, 0.35);">
-            <h2>🗄️ Permanent Parlay Archive Vault (PostgreSQL Engine)</h2>
-            <table>
-                <tr><th>Timestamp</th><th>Tier / Category</th><th>Stake</th><th>Multiplier</th><th>Potential Payout</th><th>Legs / Description</th></tr>
-                {% for row in parlay_archive_rows %}
-                <tr>
-                    <td style="color: var(--text-muted); font-size: 10px;">{{ row[1] }}</td>
-                    <td style="color: var(--gold-vegas); font-weight:700;">{{ row[2] }}</td>
-                    <td>{{ row[3] }}</td>
-                    <td style="color: #38bdf8; font-weight:700;">{{ row[4] }}</td>
-                    <td style="color: var(--neon-green); font-weight:700;">{{ row[5] }}</td>
-                    <td style="font-size: 10px; color: #e5e7eb;">{{ row[6] }}</td>
-                </tr>
-                {% endfor %}
-            </table>
-        </div>
-
-        <div class="grid-2">
-            <!-- Straight Bets Archive -->
-            <div class="card-box" style="margin-bottom:0;">
-                <h2>🔥 High-Confidence Straight Bet Edge Archive</h2>
-                <table>
-                    <tr><th>Timestamp</th><th>Matchup</th><th>Selection</th><th>Odds</th><th>Edge</th></tr>
-                    {% for s_row in straight_archive_rows %}
-                    <tr>
-                        <td style="color: var(--text-muted); font-size: 10px;">{{ s_row[1] }}</td>
-                        <td><strong>{{ s_row[2] }}</strong></td>
-                        <td style="color: #fff;">{{ s_row[3] }}</td>
-                        <td style="color: #38bdf8; font-weight:700;">{{ s_row[4] }}</td>
-                        <td style="color: var(--neon-green); font-weight:700;">{{ s_row[5] }}</td>
-                    </tr>
+                <ul class="parlay-legs">
+                    {% for leg in parlay.legs %}
+                    <li>{{ leg }}</li>
                     {% endfor %}
-                </table>
-            </div>
-
-            <!-- Trend Sniffer -->
-            <div class="card-box" style="margin-bottom:0;">
-                <h2>🔍 Trend Sniffer & Trap Radar</h2>
-                <table>
-                    <tr><th>Game Matchup</th><th>Public Split</th><th>Assessment</th></tr>
-                    {% for item in trend_insights %}
-                    <tr>
-                        <td><strong>{{ item.game }}</strong></td>
-                        <td style="color: var(--neon-red);">{{ item.public_split }}</td>
-                        <td><span class="indicator-badge" style="background: rgba(255,23,68,0.1); color: var(--neon-red); border-color: rgba(255,23,68,0.3);">{{ item.trap_status }}</span></td>
-                    </tr>
-                    {% endfor %}
-                </table>
-            </div>
-        </div>
-
-        <h2 style="margin-top: 20px;">🏈 Live Matchups (Strict 7-Day Slate), Spreads & Tale of the Tape</h2>
-        <div class="games-grid">
-            {% for game in games %}
-            <div class="game-card">
-                <div class="game-header">
-                    <span>{{ game.away_team }} @ {{ game.home_team }}</span>
-                    <span style="font-size: 9px; color: var(--text-muted);">{{ game.commence_time[:10] if game.commence_time else '' }}</span>
+                </ul>
+                <div class="parlay-footer">
+                    <span>Stake: {{ parlay.stake }}</span>
+                    <span>Payout: {{ parlay.payout }}</span>
                 </div>
-                
-                <div style="background: rgba(212, 175, 55, 0.05); border: 1px solid var(--border-gold); border-radius: 6px; padding: 8px; margin-bottom: 8px; font-size: 11px;">
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 3px;">
-                        <span style="color: var(--text-muted);">⚡ Better Offense:</span>
-                        <strong style="color: var(--neon-green);">{{ game.better_off }} ({{ game.better_off_stat }})</strong>
-                    </div>
-                    <div style="display: flex; justify-content: space-between;">
-                        <span style="color: var(--text-muted);">🛡️ Better Defense:</span>
-                        <strong style="color: #38bdf8;">{{ game.better_def }} ({{ game.better_def_stat }})</strong>
-                    </div>
-                </div>
-
-                {% if game.bookmakers %}
-                    {% for book in game.bookmakers[:1] %}
-                    <div class="market-sec">
-                        <div style="font-size: 9px; font-weight: 800; color: var(--gold-vegas); margin-bottom: 2px; text-transform: uppercase;">{{ book.title }}</div>
-                        {% set ns = namespace(away_ml='N/A', home_ml='N/A', away_sp='N/A', home_sp='N/A') %}
-                        {% for m in book.markets %}
-                            {% for o in m.outcomes %}
-                                {% if m.key == 'h2h' %}
-                                    {% if o.name == game.away_team %}{% set ns.away_ml = decimal_to_american(o.price) %}{% endif %}
-                                    {% if o.name == game.home_team %}{% set ns.home_ml = decimal_to_american(o.price) %}{% endif %}
-                                {% elif m.key == 'spreads' %}
-                                    {% if o.name == game.away_team %}{% set ns.away_sp = (o.point|string) + ' (' + decimal_to_american(o.price) + ')' %}{% endif %}
-                                    {% if o.name == game.home_team %}{% set ns.home_sp = (o.point|string) + ' (' + decimal_to_american(o.price) + ')' %}{% endif %}
-                                {% endif %}
-                            {% endfor %}
-                        {% endfor %}
-                        <div style="display: flex; justify-content: space-between; font-size: 10px; margin-bottom: 2px;">
-                            <span>{{ game.away_team }}</span>
-                            <div>ML: <span class="odds-val">{{ ns.away_ml }}</span> | Spread: <span class="odds-val">{{ ns.away_sp }}</span></div>
-                        </div>
-                        <div style="display: flex; justify-content: space-between; font-size: 10px;">
-                            <span>{{ game.home_team }}</span>
-                            <div>ML: <span class="odds-val">{{ ns.home_ml }}</span> | Spread: <span class="odds-val">{{ ns.home_sp }}</span></div>
-                        </div>
-                    </div>
-                    {% endfor %}
-                {% endif %}
             </div>
             {% endfor %}
-        </div>
+        {% else %}
+            <div class="empty-state" style="grid-column: 1 / -1;">No active parlays generated yet. Engine scanning upcoming matchups...</div>
+        {% endif %}
+    </div>
 
-        <div class="card-box">
-            <h2>📊 PostgreSQL Bankroll Journal</h2>
-            <table>
-                <tr><th>Timestamp</th><th>Type</th><th>Description</th><th>Stake</th><th>Status</th></tr>
-                {% for row in history %}
-                <tr>
-                    <td>{{ row[1] }}</td>
-                    <td style="color: var(--gold-vegas); font-weight:600;">{{ row[2] }}</td>
-                    <td>{{ row[3] }}</td>
-                    <td>${{ row[4] }}</td>
-                    <td style="color: var(--neon-green);">{{ row[6] }}</td>
-                </tr>
-                {% endfor %}
-            </table>
-        </div>
-
-        <div class="card-box">
-            <h2>⚙️ System Logs</h2>
-            <div class="log-box">
-                {% for log in logs %}
-                    <div>[{{ log[1] }}] {{ log[2] }}</div>
-                {% endfor %}
-            </div>
-        </div>
+    <div class="section-title">🔥 High-Confidence Straight Bet Edge Archive</div>
+    <div class="table-wrap">
+    <table>
+        <tr>
+            <th>ID</th>
+            <th>Target / Description</th>
+            <th>Market</th>
+            <th>Status</th>
+            <th>Odds</th>
+        </tr>
+        {% if picks %}
+            {% for p in picks %}
+            <tr>
+                <td>{{ p.id }}</td>
+                <td>{{ p.player_name }}</td>
+                <td>{{ p.market_name }}</td>
+                <td>
+                    {% if p.status == 'ACTIVE' %}<span class="badge-active">🟢 ACTIVE</span>
+                    {% elif p.status == 'ARCHIVED' %}<span class="badge-archived">⚪ ARCHIVED</span>
+                    {% elif p.status == 'QUARANTINED' %}<span class="badge-blocked">🚨 BLOCKED</span>
+                    {% elif p.status == 'WON' %}<span class="badge-won">✅ WON</span>
+                    {% else %}{{ p.status }}{% endif %}
+                </td>
+                <td>{{ p.odds }}</td>
+            </tr>
+            {% endfor %}
+        {% else %}
+            <tr><td colspan="5" class="empty-state">No micro bets logged in the archive yet.</td></tr>
+        {% endif %}
+    </table>
     </div>
 </body>
 </html>
 """
 
+
 @app.route("/")
-def dashboard():
-    games, straight_picks, standard_parlay, booster_parlay, bomb_parlay, sub_threshold_parlays, player_leaders, bankroll_summary, trend_insights = fetch_terminal_data()
-    
-    history, logs, parlay_archive_rows, straight_archive_rows = [], [], [], []
-    conn = get_db_connection()
-    if conn:
+def dashboard_view():
+    active_parlays = []
+    picks = []
+    total_picks = active_count = quarantined_count = 0
+
+    if DB_AVAILABLE:
+        session = SessionLocal()
         try:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM bets ORDER BY id DESC LIMIT 15")
-            history = cursor.fetchall()
-            cursor.execute("SELECT * FROM bot_logs ORDER BY id DESC LIMIT 15")
-            logs = cursor.fetchall()
-            cursor.execute("SELECT * FROM parlay_archive ORDER BY id DESC LIMIT 30")
-            parlay_archive_rows = cursor.fetchall()
-            cursor.execute("SELECT * FROM straight_archive ORDER BY id DESC LIMIT 20")
-            straight_archive_rows = cursor.fetchall()
-        except Exception as e:
-            print(f"Fetch Error: {e}")
+            # Parlays: convert to plain dicts so the page never touches a closed session
+            for p in session.query(ParlaySlip).filter(ParlaySlip.status == "ACTIVE").all():
+                try:
+                    legs = json.loads(p.legs_json) if p.legs_json else []
+                except Exception:
+                    legs = [p.legs_json] if p.legs_json else []
+                active_parlays.append({
+                    "category": p.category, "odds": p.odds, "stake": p.stake,
+                    "payout": p.payout, "legs": legs,
+                })
+
+            for p in session.query(PickLog).order_by(PickLog.id.desc()).limit(25).all():
+                odds = p.picked_odds
+                if odds is not None and float(odds).is_integer():
+                    odds = int(odds)
+                picks.append({
+                    "id": p.id, "player_name": p.player_name, "market_name": p.market_name,
+                    "status": p.status, "odds": odds if odds is not None else "-",
+                })
+
+            total_picks = session.query(PickLog).count()
+            active_count = session.query(PickLog).filter(PickLog.status == "ACTIVE").count()
+            quarantined_count = session.query(PickLog).filter(PickLog.status == "QUARANTINED").count()
+        except Exception:
+            log.exception("DASHBOARD QUERY FAILED")
         finally:
-            conn.close()
-    
+            session.close()
+
     return render_template_string(
-        HTML_TEMPLATE, 
-        games=games, 
-        straight_picks=straight_picks, 
-        standard_parlay=standard_parlay,
-        booster_parlay=booster_parlay,
-        bomb_parlay=bomb_parlay,
-        sub_threshold_parlays=sub_threshold_parlays,
-        player_leaders=player_leaders,
-        bankroll_summary=bankroll_summary,
-        history=history, 
-        logs=logs,
-        parlay_archive_rows=parlay_archive_rows,
-        straight_archive_rows=straight_archive_rows,
-        trend_insights=trend_insights,
-        decimal_to_american=decimal_to_american
+        HTML_TEMPLATE,
+        timestamp=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+        db_available=DB_AVAILABLE,
+        total_picks=total_picks,
+        active_count=active_count,
+        quarantined_count=quarantined_count,
+        roi="+0.00",
+        active_parlays=active_parlays,
+        picks=picks,
     )
 
+
+@app.route("/debug")
+def debug():
+    info = {
+        "DB_AVAILABLE": DB_AVAILABLE,
+        "ODDS_API_KEY_set": bool(os.getenv("ODDS_API_KEY")),
+        "DATABASE_URL_set": bool(os.getenv("DATABASE_URL")),
+        "ingestion_loaded": ingestion is not None,
+    }
+    if DB_AVAILABLE:
+        s = SessionLocal()
+        try:
+            info["database_type"] = engine.dialect.name
+            info["pick_count"] = s.query(PickLog).count()
+            info["parlay_count"] = s.query(ParlaySlip).count()
+            info["parlay_statuses"] = [r[0] for r in s.query(ParlaySlip.status).distinct()]
+            info["pick_statuses"] = [r[0] for r in s.query(PickLog.status).distinct()]
+        except Exception as e:
+            log.exception("DEBUG QUERY FAILED")
+            info["error"] = str(e)
+        finally:
+            s.close()
+    return info
+
+
+@app.route("/run-now")
+def run_now():
+    """Visit this once to fetch data immediately without waiting."""
+    run_ingestion()
+    return "Ingestion triggered. Check your logs, then go back to the dashboard."
+
+
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
