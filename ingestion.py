@@ -1,3 +1,4 @@
+from matchup_research import save_matchup_research
 from player_research import refresh_player_research
 from research_data import refresh_team_research
 from selection_tracker import track_ticket
@@ -394,6 +395,11 @@ def fetch_and_store_live_data():
 
     matchups = [m for m in (parse_game(g) for g in games) if m]
     log.info("Games with bookmaker data: %s", len(matchups))
+
+    try:
+        save_matchup_research(matchups)
+    except Exception:
+        log.exception("Matchup research failed; existing engine unchanged")
 
     store_straight_bets(matchups)
     build_parlay(matchups)
