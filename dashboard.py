@@ -5,6 +5,7 @@ from flask import Flask, render_template_string
 from dotenv import load_dotenv
 from apscheduler.schedulers.background import BackgroundScheduler
 import ingestion
+from settlement import shadow_roi
 
 load_dotenv()
 app = Flask(__name__)
@@ -22,12 +23,8 @@ except Exception as e:
 try:
     scheduler = BackgroundScheduler()
     scheduler.add_job(
-        func=ingestion.fetch_and_store_live_data,
-        trigger="interval",
-        minutes=60,
-        next_run_time=datetime.now(timezone.utc),
-        max_instances=1,
-        coalesce=True,
+        func=ingestion.fetch_and_store_live_data, trigger="interval", minutes=60,
+        next_run_time=datetime.now(timezone.utc), max_instances=1, coalesce=True,
     )
     scheduler.start()
     print("Background ingestion scheduler started.")
@@ -71,8 +68,8 @@ HTML_TEMPLATE = """
     <div class="grid">
         <div class="metric">Logged Picks<span>{{ total_picks }}</span></div>
         <div class="metric">Active Shadow Bets<span>{{ active_count }}</span></div>
-        <div class="metric">Quarantined Gatekeeper<span>{{ quarantined_count }}</span></div>
-        <div class="metric">Settled Straight-Bet ROI<span>{{ roi }}</span></div>
+        <div class="metric">Quarantined / Review<span>{{ quarantined_count }}</span></div>
+        <div class="metric">Settled Shadow ROI<span>{{ roi }}</span></div>
     </div>
 
     <div class="section-title">🎯 Active Parlay Slips</div>
@@ -166,6 +163,7 @@ def dashboard_view():
     micro_parlays = []
     picks = []
     total_picks = active_count = quarantined_count = 0
+    roi = "N/A (no settled picks)"
     session = None
     
     if DB_AVAILABLE:
@@ -176,8 +174,13 @@ def dashboard_view():
                 PickLog.status == "ACTIVE", PickLog.is_shadow.is_(True)
             ).count()
             quarantined_count = session.query(PickLog).filter(
-                PickLog.status == "QUARANTINED"
+                PickLog.status.in_(["QUARANTINED", "REVIEW_REQUIRED"])
             ).count()
+            roi = shadow_roi(session.query(PickLog).filter(
+                PickLog.is_shadow.is_(True), PickLog.market_key == "h2h",
+                PickLog.status.in_(["WON", "LOST", "PUSH"]),
+                PickLog.realized_profit.isnot(None),
+            ).all())
             
             # Fetch active parlays and decode their JSON legs safely in Python
             raw_parlays = session.query(ParlaySlip).filter(ParlaySlip.status == "ACTIVE").all()
@@ -208,7 +211,7 @@ def dashboard_view():
         total_picks=total_picks,
         active_count=active_count,
         quarantined_count=quarantined_count,
-        roi="N/A (settlement pending)",
+        roi=roi,
         active_parlays=active_parlays,
         micro_parlays=micro_parlays,
         picks=picks

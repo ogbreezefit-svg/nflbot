@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, timezone
 
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean, Text, inspect, text
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean, Text, inspect, text, Index
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 load_dotenv()
@@ -42,6 +42,11 @@ class PickLog(Base):
     __table_args__ = {"extend_existing": True}
 
     id = Column(Integer, primary_key=True)
+    pick_key = Column(String, nullable=True)
+    market_key = Column(String, nullable=True)
+    realized_return = Column(Float, nullable=True)
+    realized_profit = Column(Float, nullable=True)
+    settled_at = Column(DateTime(timezone=True), nullable=True)
     player_name = Column(String, nullable=True)
     event_id = Column(String, nullable=True)
     market_name = Column(String)
@@ -60,6 +65,8 @@ class PickLog(Base):
     is_shadow = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
+
+Index("uq_picks_pick_key", PickLog.pick_key, unique=True)
 
 class ParlaySlip(Base):
     __tablename__ = "parlays"
@@ -98,4 +105,10 @@ def init_db():
     """Create tables if they don't exist yet, then fix old tables."""
     Base.metadata.create_all(bind=engine)
     add_missing_columns()
+    existing = {c["name"] for c in inspect(engine).get_columns("picks")}
+    required = {c.name for c in PickLog.__table__.columns}
+    if not required.issubset(existing):
+        raise RuntimeError("Pick schema migration incomplete; check database logs.")
+    for index in PickLog.__table__.indexes:
+        index.create(bind=engine, checkfirst=True)
     log.info("Database ready (%s)", engine.dialect.name)
