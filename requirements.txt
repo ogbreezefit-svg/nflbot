@@ -1,7 +1,9 @@
+cat << 'EOF' > requirements.txt
 Flask
 gunicorn
 python-dotenv
 SQLAlchemy
 psycopg2-binary
 requests
-APSchedulerAPScheduler
+APScheduler
+EOF
