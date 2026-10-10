@@ -1,3 +1,4 @@
+from nfl_moneyline import store_moneyline_picks, settle_moneyline_picks
 import os
 import json
 import logging
@@ -81,6 +82,8 @@ def parse_game(game):
     home_team = game.get("home_team")
     away_team = game.get("away_team")
     data = {
+        "event_id": game.get("id"),
+        "commence_time": game.get("commence_time"),
         "home": home_team,
         "away": away_team,
         "home_ml": 0,
@@ -118,30 +121,7 @@ def parse_game(game):
 
 
 def store_straight_bets(matchups):
-    db = SessionLocal()
-    added = 0
-    try:
-        for m in matchups:
-            if not m["home_ml"]:
-                continue
-            name = f"{m['home']} (Moneyline)"
-            existing = db.query(PickLog).filter_by(player_name=name, status="ACTIVE").first()
-            if existing:
-                continue
-            db.add(PickLog(
-                player_name=name,
-                market_name=f"{m['away']} @ {m['home']}",
-                status="ACTIVE",
-                picked_odds=m["home_ml"],
-            ))
-            added += 1
-        db.commit()
-        log.info("Straight bets saved. New picks added: %s", added)
-    except Exception:
-        db.rollback()
-        log.exception("Error saving straight bets")
-    finally:
-        db.close()
+    store_moneyline_picks(matchups)
 
 
 def build_parlay(matchups):
@@ -385,7 +365,13 @@ def filter_upcoming_games(games, now=None):
 
 
 def fetch_and_store_live_data():
+    from db import init_db
+    init_db()
     log.info("Starting data ingestion...")
+    try:
+        settle_moneyline_picks()
+    except Exception:
+        log.exception("Moneyline settlement failed; continuing ingestion")
     games = SportsDataAPI().get_upcoming_nfl_games()
 
     if not games:
