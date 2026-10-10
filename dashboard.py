@@ -1,3 +1,4 @@
+from dashboard_ui import build_dashboard_context
 import os
 import json
 from datetime import datetime, timezone
@@ -31,255 +32,25 @@ try:
 except Exception as e:
     print(f"Failed to start scheduler: {e}")
 
-HTML_TEMPLATE = """
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Ogbreeze Command Center</title>
-    <meta http-equiv="refresh" content="30">
-    <style>
-        body { background-color: #0d1117; color: #c9d1d9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 20px; }
-        h1 { color: #58a6ff; text-align: center; font-size: 24px; border-bottom: 1px solid #30363d; padding-bottom: 15px; }
-        .grid { display: flex; justify-content: space-around; background: #161b22; padding: 15px; border-radius: 8px; border: 1px solid #30363d; margin-bottom: 20px; }
-        .metric { text-align: center; }
-        .metric span { display: block; font-size: 20px; font-weight: bold; color: #f0f6fc; margin-top: 5px; }
-        .section-title { color: #58a6ff; font-size: 18px; margin-top: 30px; margin-bottom: 15px; border-bottom: 1px solid #30363d; padding-bottom: 5px; }
-        .parlay-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px; margin-bottom: 25px; }
-        .parlay-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 15px; }
-        .parlay-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #30363d; padding-bottom: 8px; margin-bottom: 10px; }
-        .parlay-title { font-weight: bold; color: #f0f6fc; }
-        .parlay-odds { color: #3fb950; font-weight: bold; }
-        .parlay-legs { list-style-type: disc; padding-left: 20px; margin: 10px 0; font-size: 13px; color: #8b949e; }
-        .parlay-footer { font-size: 12px; color: #8b949e; display: flex; justify-content: space-between; margin-top: 10px; border-top: 1px solid #30363d; padding-top: 8px; }
-        table { width: 100%; border-collapse: collapse; background: #161b22; border-radius: 8px; overflow: hidden; border: 1px solid #30363d; }
-        th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #30363d; font-size: 14px; }
-        th { background: #21262d; color: #8b949e; }
-        .badge-active { color: #3fb950; font-weight: bold; }
-        .badge-archived { color: #8b949e; font-weight: bold; }
-        .badge-blocked { color: #f85149; font-weight: bold; }
-        .badge-won { color: #58a6ff; font-weight: bold; }
-        .empty-state { text-align: center; color: #8b949e; padding: 20px; font-style: italic; }
-    </style>
-</head>
-<body>
-    <h1>⚡ OGBREEZE TIERED PARLAY & SHADOW COMMAND CENTER ⚡</h1>
-    <p style="text-align: center; color: #8b949e; font-size: 12px;">UTC Timestamp: {{ timestamp }}</p>
-
-    <div class="grid">
-        <div class="metric">Logged Picks<span>{{ total_picks }}</span></div>
-        <div class="metric">Active Shadow Bets<span>{{ active_count }}</span></div>
-        <div class="metric">Quarantined / Review<span>{{ quarantined_count }}</span></div>
-        <div class="metric">Settled Shadow ROI<span>{{ roi }}</span></div>
-    </div>
-
-
-    <!-- WEEKLY_PICK_TRACKER -->
-    <div class="section-title">📊 Weekly Pick Record</div>
-    <p style="color: #8b949e; font-size: 12px;">
-        Monday–Sunday, Chicago time, grouped by game kickoff.
-        Counts tracked straight selections and parlay legs—not whole tickets. New selections are deduplicated by event, market, side, and line.
-        Win rate excludes pushes, pending picks, and review items.
-    </p>
-
-    {% if not weekly_available %}
-    <p class="badge-blocked">
-        Weekly results unavailable: the database could not be queried.
-    </p>
-    {% else %}
-    <div style="overflow-x: auto;">
-    <table>
-        <tr>
-            <th>Week</th>
-            <th>Wins</th>
-            <th>Losses</th>
-            <th>Pushes</th>
-            <th>Pending</th>
-            <th>Review</th>
-            <th>Other</th>
-            <th>Total</th>
-            <th>Win Rate</th>
-        </tr>
-        {% for week in weekly_summary.weeks %}
-        <tr>
-            <td>
-                {{ week.label }}
-                {% if week.current %}
-                <span class="badge-active"> • Current</span>
-                {% endif %}
-            </td>
-            <td class="badge-won">{{ week.wins }}</td>
-            <td>{{ week.losses }}</td>
-            <td>{{ week.pushes }}</td>
-            <td>{{ week.pending }}</td>
-            <td>{{ week.review }}</td>
-            <td>{{ week.other }}</td>
-            <td>{{ week.total }}</td>
-            <td>{{ week.win_rate }}</td>
-        </tr>
-        {% endfor %}
-    </table>
-    </div>
-
-    {% if weekly_summary.undated %}
-    <p style="color: #d29922; font-size: 12px;">
-        {{ weekly_summary.undated }} pick record(s) have no kickoff time.
-        They are excluded from weekly totals—not assumed to belong
-        to the current week.
-    </p>
-    {% endif %}
-    {% endif %}
-
-    <div class="section-title">🎯 Active Parlay Slips</div>
-    <div class="parlay-grid">
-        {% if active_parlays %}
-            {% for parlay in active_parlays %}
-            {% if parlay.category != 'Micro Sandbox' %}
-            <div class="parlay-card">
-                <div class="parlay-header">
-                    <span class="parlay-title">{{ parlay.category }}</span>
-                    <span class="parlay-odds">{{ parlay.odds }}</span>
-                </div>
-                <ul class="parlay-legs">
-                    {% for leg in parlay.decoded_legs %}
-                    <li>{{ leg }}</li>
-                    {% endfor %}
-                </ul>
-                <div class="parlay-footer">
-                    <span>Stake: {{ parlay.stake }}</span>
-                    <span>Payout: {{ parlay.payout }}</span>
-                </div>
-            </div>
-            {% endif %}
-            {% endfor %}
-        {% else %}
-            <div class="empty-state" style="grid-column: 1 / -1;">No active parlays generated yet. Engine scanning upcoming matchups...</div>
-        {% endif %}
-    </div>
-
-    <div class="section-title">📥 Sub-Threshold / Micro Sandbox</div>
-    <p style="font-size: 12px; color: #8b949e;">Small micro bets, plus any Booster under 50x or Bomb under $1,000, are routed here automatically.</p>
-    <table style="margin-bottom: 25px;">
-        <tr>
-            <th>Ticket</th>
-            <th>Stake</th>
-            <th>Odds</th>
-            <th>Potential Return</th>
-            <th>Status</th>
-        </tr>
-        {% if micro_parlays %}
-            {% for m in micro_parlays %}
-            <tr>
-                <td>{{ m.decoded_legs | join(' + ') }}</td>
-                <td>{{ m.stake }}</td>
-                <td>{{ m.odds }}</td>
-                <td class="badge-active">{{ m.payout }}</td>
-                <td class="badge-archived">SET ASIDE</td>
-            </tr>
-            {% endfor %}
-        {% else %}
-            <tr><td colspan="5" class="empty-state">No micro sandbox tickets yet. Engine scanning upcoming matchups...</td></tr>
-        {% endif %}
-    </table>
-
-    <div class="section-title">🔥 High-Confidence Straight Bet Edge Archive</div>
-    <table>
-        <tr>
-            <th>ID</th>
-            <th>Target / Description</th>
-            <th>Market</th>
-            <th>Status</th>
-            <th>Odds</th>
-        </tr>
-        {% if picks %}
-            {% for p in picks %}
-            <tr>
-                <td>{{ p.id }}</td>
-                <td>{{ p.player_name }}</td>
-                <td>{{ p.market_name }}</td>
-                <td>
-                    {% if p.status == 'ACTIVE' %}<span class="badge-active">🟢 ACTIVE</span>
-                    {% elif p.status == 'ARCHIVED' %}<span class="badge-archived">⚪ ARCHIVED</span>
-                    {% elif p.status == 'QUARANTINED' %}<span class="badge-blocked">🚨 BLOCKED</span>
-                    {% elif p.status == 'WON' %}<span class="badge-won">✅ WON</span>
-                    {% else %}{{ p.status }}{% endif %}
-                </td>
-                <td>{{ p.picked_odds }}</td>
-            </tr>
-            {% endfor %}
-        {% else %}
-            <tr><td colspan="5" class="empty-state">No micro bets logged in the archive yet.</td></tr>
-        {% endif %}
-    </table>
-</body>
-</html>
-"""
+HTML_TEMPLATE = '\n<!DOCTYPE html>\n<html>\n<head>\n    <title>Ogbreeze Command Center</title>\n    <meta name="viewport" content="width=device-width, initial-scale=1">\n    <meta http-equiv="refresh" content="60">\n    <style>\n        body {\n            margin: 0; padding: 20px;\n            background: #0d1117; color: #c9d1d9;\n            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;\n        }\n        main { max-width: 1250px; margin: auto; }\n        h1 { color: #58a6ff; font-size: 24px; margin-bottom: 6px; }\n        h2 { font-size: 18px; color: #58a6ff; margin-top: 28px; }\n        .muted { color: #8b949e; font-size: 12px; line-height: 1.6; }\n        .metrics, .cards {\n            display: grid; gap: 12px;\n            grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));\n        }\n        .metric, .card, details {\n            background: #161b22; border: 1px solid #30363d;\n            border-radius: 8px; padding: 15px;\n        }\n        .metric span { display: block; font-size: 23px; margin-top: 8px; color: #f0f6fc; }\n        .metric small { display: block; margin-top: 5px; color: #8b949e; }\n        .card-header { display: flex; justify-content: space-between; gap: 10px; }\n        .price, .won { color: #3fb950; }\n        .lost { color: #f85149; }\n        .review { color: #d29922; }\n        ul { padding-left: 20px; font-size: 13px; line-height: 1.8; }\n        .table-wrap { overflow-x: auto; }\n        table { width: 100%; border-collapse: collapse; font-size: 13px; }\n        th, td { padding: 11px; border-bottom: 1px solid #30363d; text-align: left; }\n        th { color: #8b949e; }\n        summary { cursor: pointer; color: #58a6ff; }\n        details { margin-top: 16px; }\n        .empty { color: #8b949e; padding: 12px 0; }\n        .error { border: 1px solid #f85149; padding: 15px; }\n    </style>\n</head>\n<body>\n<main>\n    <h1>⚡ OGBREEZE COMMAND CENTER</h1>\n    <p class="muted">{{ week_label }} · Chicago time · {{ timestamp }}</p>\n\n    {% if not available %}\n    <p class="error">Dashboard data unavailable. Check deployment logs.</p>\n    {% else %}\n\n    <div class="metrics">\n        <div class="metric">This Week’s Straight Picks\n            <span>{{ straight_count }}</span>\n            <small>Engine-logged standalone moneylines</small>\n        </div>\n        <div class="metric">Pending Selections\n            <span>{{ pending_selections }}</span>\n            <small>This week’s unique tracked selections</small>\n        </div>\n        <div class="metric">Pending Tickets\n            <span>—</span>\n            <small>Awaiting ticket-to-leg outcome links</small>\n        </div>\n        <div class="metric">Weekly Selection Record\n            <span>{{ record }}</span>\n            <small>Wins–losses–pushes · Win rate {{ win_rate }}</small>\n        </div>\n    </div>\n\n    {% if review_count %}\n    <p class="muted review">{{ review_count }} current-week selection(s) require review.</p>\n    {% endif %}\n\n    <h2>🎯 Parlay Tickets</h2>\n    <p class="muted">\n        Current engine-generated slips. Stakes and potential returns are engine estimates,\n        not confirmed sportsbook wagers or accepted quotes.\n    </p>\n    <div class="cards">\n        {% for ticket in active_tickets %}\n        <div class="card">\n            <div class="card-header">\n                <span>{{ ticket.category }}</span>\n                <span class="price">{{ ticket.odds }}</span>\n            </div>\n            <ul>{% for leg in ticket.legs %}<li>{{ leg }}</li>{% endfor %}</ul>\n            <div class="muted">\n                Stake {{ ticket.stake }} · Potential return {{ ticket.payout }}<br>\n                Ticket #{{ ticket.id }} · Outcome {{ ticket.outcome }}\n            </div>\n        </div>\n        {% else %}\n        <p class="empty">No current parlay slips.</p>\n        {% endfor %}\n    </div>\n\n    <details>\n        <summary>📥 Micro Sandbox · {{ micro_tickets | length }} current slips</summary>\n        <div class="table-wrap">\n        <table>\n            <tr><th>Selections</th><th>Stake</th><th>Odds</th><th>Potential Return</th></tr>\n            {% for ticket in micro_tickets %}\n            <tr>\n                <td>{{ ticket.legs | join(\' + \') }}</td>\n                <td>{{ ticket.stake }}</td>\n                <td>{{ ticket.odds }}</td>\n                <td>{{ ticket.payout }}</td>\n            </tr>\n            {% else %}\n            <tr><td colspan="4">No current Micro slips.</td></tr>\n            {% endfor %}\n        </table>\n        </div>\n    </details>\n\n    <h2>🏈 Straight Game Picks</h2>\n    <p class="muted">\n        This week’s standalone moneylines already logged by your engine.\n        Selection rules are unchanged; these are not newly filtered recommendations.\n    </p>\n\n    {% macro straight_table(rows) %}\n    <div class="table-wrap">\n    <table>\n        <tr><th>Game</th><th>Pick</th><th>Odds</th><th>Kickoff</th><th>Result</th></tr>\n        {% for pick in rows %}\n        <tr>\n            <td>{{ pick.game }}</td><td>{{ pick.pick }}</td>\n            <td>{{ pick.odds }}</td><td>{{ pick.kickoff }}</td>\n            <td class="{{ \'won\' if pick.status == \'WON\' else (\'lost\' if pick.status == \'LOST\' else \'\') }}">\n                {{ pick.status }}\n            </td>\n        </tr>\n        {% else %}\n        <tr><td colspan="5">No dated standalone picks recorded for this week.</td></tr>\n        {% endfor %}\n    </table>\n    </div>\n    {% endmacro %}\n\n    {{ straight_table(straight_preview) }}\n    {% if straight_more %}\n    <details>\n        <summary>Show {{ straight_more | length }} more straight picks</summary>\n        {{ straight_table(straight_more) }}\n    </details>\n    {% endif %}\n\n    <details>\n        <summary>🗓 This Week’s Games · {{ games | length }} recorded games</summary>\n        <p class="muted">\n            Games represented in stored engine selections—not a complete schedule feed.\n            Listing a game here does not designate it as a pick.\n        </p>\n        <div class="table-wrap">\n        <table>\n            <tr><th>Game</th><th>Kickoff</th></tr>\n            {% for game in games %}\n            <tr><td>{{ game.game }}</td><td>{{ game.kickoff }}</td></tr>\n            {% else %}\n            <tr><td colspan="2">No dated games recorded for this week.</td></tr>\n            {% endfor %}\n        </table>\n        </div>\n    </details>\n\n    <details>\n        <summary>📊 Weekly Selection History</summary>\n        <div class="table-wrap">\n        <table>\n            <tr>\n                <th>Week</th><th>Wins</th><th>Losses</th><th>Pushes</th>\n                <th>Pending</th><th>Review</th><th>Win Rate</th>\n            </tr>\n            {% for week in weekly_summary.weeks %}\n            <tr>\n                <td>{{ week.label }}</td><td>{{ week.wins }}</td>\n                <td>{{ week.losses }}</td><td>{{ week.pushes }}</td>\n                <td>{{ week.pending }}</td><td>{{ week.review }}</td>\n                <td>{{ week.win_rate }}</td>\n            </tr>\n            {% endfor %}\n        </table>\n        </div>\n    </details>\n\n    <details>\n        <summary>🧾 Ticket History · latest {{ ticket_history | length }} generated slips</summary>\n        <p class="muted">\n            Display status is separate from betting outcome.\n            ACTIVE and ARCHIVED do not mean pending, won, or lost.\n            Repeated engine-generated versions are not confirmed placed bets.\n            Ticket outcomes remain untracked until structured ticket links are added.\n        </p>\n        <div class="table-wrap">\n        <table>\n            <tr>\n                <th>Ticket</th><th>Created</th><th>Category</th>\n                <th>Display Status</th><th>Outcome</th><th>Legs</th>\n            </tr>\n            {% for ticket in ticket_history %}\n            <tr>\n                <td>#{{ ticket.id }}</td><td>{{ ticket.created }}</td>\n                <td>{{ ticket.category }}</td><td>{{ ticket.display_status }}</td>\n                <td>{{ ticket.outcome }}</td>\n                <td>\n                    <details>\n                        <summary>View</summary>\n                        <ul>{% for leg in ticket.legs %}<li>{{ leg }}</li>{% endfor %}</ul>\n                    </details>\n                </td>\n            </tr>\n            {% endfor %}\n        </table>\n        </div>\n    </details>\n\n    {% if undated %}\n    <p class="muted">\n        {{ undated }} stored selection(s) lack kickoff dates and are excluded from current-week totals.\n    </p>\n    {% endif %}\n\n    {% endif %}\n</main>\n</body>\n</html>\n'
 
 @app.route("/")
 def dashboard_view():
-    active_parlays = []
-    micro_parlays = []
-    picks = []
-    total_picks = active_count = quarantined_count = 0
-    roi = "N/A (no settled picks)"
-    session = None
-    weekly_summary = weekly_pick_summary([])
-    weekly_available = False
-    
+    data = build_dashboard_context([], [])
+    available = False
+
     if DB_AVAILABLE:
         try:
-            session = SessionLocal()
-            weekly_summary = weekly_pick_summary(
-                session.query(PickLog).all()
-            )
-            weekly_available = True
-            total_picks = session.query(PickLog).count()
-            active_count = session.query(PickLog).filter(
-                PickLog.status == "ACTIVE", PickLog.is_shadow.is_(True)
-            ).count()
-            quarantined_count = session.query(PickLog).filter(
-                PickLog.status.in_(["QUARANTINED", "REVIEW_REQUIRED"])
-            ).count()
-            roi = shadow_roi(session.query(PickLog).filter(
-                PickLog.is_shadow.is_(True), PickLog.market_key == "h2h",
-                PickLog.status.in_(["WON", "LOST", "PUSH"]),
-                PickLog.realized_profit.isnot(None),
-            ).all())
-            
-            # Fetch active parlays and decode their JSON legs safely in Python
-            raw_parlays = session.query(ParlaySlip).filter(ParlaySlip.status == "ACTIVE").all()
-            for p in raw_parlays:
-                try:
-                    p.decoded_legs = json.loads(p.legs_json) if p.legs_json else []
-                except Exception:
-                    p.decoded_legs = [p.legs_json] if p.legs_json else []
-                active_parlays.append(p)
+            with SessionLocal() as session:
+                picks = session.query(PickLog).all()
+                slips = session.query(ParlaySlip).all()
+                data = build_dashboard_context(picks, slips)
+                available = True
+        except Exception as error:
+            print(f"Dashboard query error: {error}")
 
-            # Show the tiers in order: Standard Cap, Booster Matrix, Bomb Target
-            tier_order = {"Standard Cap": 0, "Booster Matrix": 1, "Bomb Target": 2}
-            active_parlays.sort(key=lambda x: tier_order.get(x.category, 99))
-            micro_parlays = [p for p in active_parlays if p.category == "Micro Sandbox"]
-            
-            # Fetch recent micro bets / straight bets for the archive ledger
-            picks = session.query(PickLog).order_by(PickLog.id.desc()).limit(25).all()
-        except Exception as e:
-            print(f"Query error: {e}")
-        finally:
-            if session is not None:
-                session.close()
-
-    
     return render_template_string(
-        HTML_TEMPLATE,
-        timestamp=datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC'),
-        total_picks=total_picks,
-        active_count=active_count,
-        quarantined_count=quarantined_count,
-        roi=roi,
-        weekly_summary=weekly_summary,
-        weekly_available=weekly_available,
-        active_parlays=active_parlays,
-        micro_parlays=micro_parlays,
-        picks=picks
+        HTML_TEMPLATE, available=available, **data
     )
 
 if __name__ == "__main__":
