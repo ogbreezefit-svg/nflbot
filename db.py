@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, timezone
 
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean, Text
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean, Text, inspect, text
 from sqlalchemy.orm import sessionmaker, declarative_base
 
 load_dotenv()
@@ -75,7 +75,27 @@ class ParlaySlip(Base):
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
 
+def add_missing_columns():
+    """create_all never adds columns to old tables, so add any that are missing."""
+    insp = inspect(engine)
+    for table in Base.metadata.sorted_tables:
+        if not insp.has_table(table.name):
+            continue
+        existing = {c["name"] for c in insp.get_columns(table.name)}
+        for col in table.columns:
+            if col.name in existing:
+                continue
+            try:
+                coltype = col.type.compile(dialect=engine.dialect)
+                with engine.begin() as conn:
+                    conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {coltype}'))
+                log.info("Added missing column %s.%s", table.name, col.name)
+            except Exception:
+                log.exception("Could not add column %s.%s", table.name, col.name)
+
+
 def init_db():
-    """Create tables if they don't exist yet."""
+    """Create tables if they don't exist yet, then fix old tables."""
     Base.metadata.create_all(bind=engine)
+    add_missing_columns()
     log.info("Database ready (%s)", engine.dialect.name)
