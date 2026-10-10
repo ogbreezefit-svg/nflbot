@@ -1,3 +1,4 @@
+from parlay_research_gate import record_parlay_research_gate
 from news_research import refresh_news_research
 from matchup_research import save_matchup_research
 from player_research import refresh_player_research
@@ -130,6 +131,18 @@ def store_straight_bets(matchups):
 
 
 def build_parlay(matchups):
+    # Strict pause: retain legacy code below, but never execute it.
+    try:
+        record_parlay_research_gate(matchups)
+    except Exception:
+        log.exception(
+            "build_parlay: research audit failed; creation remains PAUSED"
+        )
+    log.warning(
+        "build_parlay: automatic parlay creation PAUSED; existing tickets unchanged"
+    )
+    return
+
     heavy_favorites = sorted(
         [m for m in matchups if m["home_spread"] and m["home_spread"] < 0 and m["home_ml"]],
         key=lambda x: x["home_spread"],
@@ -244,6 +257,18 @@ def micro_slip(legs, odds_list, stake, note):
 
 
 def build_tier_parlays(matchups):
+    # Strict pause: retain legacy code below, but never execute it.
+    try:
+        record_parlay_research_gate(matchups)
+    except Exception:
+        log.exception(
+            "build_tier_parlays: research audit failed; creation remains PAUSED"
+        )
+    log.warning(
+        "build_tier_parlays: automatic parlay creation PAUSED; existing tickets unchanged"
+    )
+    return
+
     heavy_favorites = sorted(
         [m for m in matchups if m["home_spread"] and m["home_spread"] < 0 and m["home_ml"]],
         key=lambda x: x["home_spread"],
