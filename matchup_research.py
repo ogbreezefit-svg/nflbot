@@ -7,6 +7,8 @@ from sqlalchemy import Column, String, DateTime, Text
 from db import Base, SessionLocal
 from research_data import ResearchSnapshot, utc_time
 from matchup_features import build_matchup_report
+from player_research import PlayerResearchSnapshot
+from player_matchup import summarize_player_snapshot
 
 log = logging.getLogger("ogbreeze.matchup_research")
 
@@ -63,6 +65,44 @@ def save_matchup_research(matchups):
                 continue
 
             report = build_matchup_report(matchup, teams)
+
+            # Weather and venue research are deliberately excluded.
+            report["excluded_research_inputs"] = ["Venue", "Weather"]
+            report["remaining_requirements"] = [
+                item for item in report.get("remaining_requirements", [])
+                if item != "Actual venue and kickoff weather"
+            ]
+
+            player_sides = []
+            for side in ("home", "away"):
+                team_report = report.get(side)
+                if not isinstance(team_report, dict):
+                    player_sides.append(False)
+                    continue
+
+                abbreviation = team_report.get("team_abv")
+                player_snapshot = (
+                    session.get(PlayerResearchSnapshot, abbreviation)
+                    if abbreviation else None
+                )
+
+                evidence = summarize_player_snapshot(
+                    player_snapshot.payload_json
+                    if player_snapshot is not None else None,
+                    utc_time(player_snapshot.fetched_at)
+                    if player_snapshot is not None else None,
+                    now,
+                    abbreviation,
+                )
+                team_report["player_evidence"] = evidence
+                player_sides.append(evidence["usable_for_current_research"])
+
+            report["player_evidence_status"] = (
+                "AVAILABLE"
+                if len(player_sides) == 2 and all(player_sides)
+                else "INCOMPLETE"
+            )
+
             report["team_source_fetched_at"] = source_time.isoformat()
             report["assembled_at"] = now.isoformat()
 
