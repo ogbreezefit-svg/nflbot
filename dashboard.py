@@ -72,6 +72,7 @@ HTML_TEMPLATE = """
     <div class="parlay-grid">
         {% if active_parlays %}
             {% for parlay in active_parlays %}
+            {% if parlay.category != 'Micro Sandbox' %}
             <div class="parlay-card">
                 <div class="parlay-header">
                     <span class="parlay-title">{{ parlay.category }}</span>
@@ -87,11 +88,37 @@ HTML_TEMPLATE = """
                     <span>Payout: {{ parlay.payout }}</span>
                 </div>
             </div>
+            {% endif %}
             {% endfor %}
         {% else %}
             <div class="empty-state" style="grid-column: 1 / -1;">No active parlays generated yet. Engine scanning upcoming matchups...</div>
         {% endif %}
     </div>
+
+    <div class="section-title">📥 Sub-Threshold / Micro Sandbox</div>
+    <p style="font-size: 12px; color: #8b949e;">Small micro bets, plus any Booster under 50x or Bomb under $1,000, are routed here automatically.</p>
+    <table style="margin-bottom: 25px;">
+        <tr>
+            <th>Ticket</th>
+            <th>Stake</th>
+            <th>Odds</th>
+            <th>Potential Return</th>
+            <th>Status</th>
+        </tr>
+        {% if micro_parlays %}
+            {% for m in micro_parlays %}
+            <tr>
+                <td>{{ m.decoded_legs | join(' + ') }}</td>
+                <td>{{ m.stake }}</td>
+                <td>{{ m.odds }}</td>
+                <td class="badge-active">{{ m.payout }}</td>
+                <td class="badge-archived">SET ASIDE</td>
+            </tr>
+            {% endfor %}
+        {% else %}
+            <tr><td colspan="5" class="empty-state">No micro sandbox tickets yet. Engine scanning upcoming matchups...</td></tr>
+        {% endif %}
+    </table>
 
     <div class="section-title">🔥 High-Confidence Straight Bet Edge Archive</div>
     <table>
@@ -129,6 +156,7 @@ HTML_TEMPLATE = """
 @app.route("/")
 def dashboard_view():
     active_parlays = []
+    micro_parlays = []
     picks = []
     
     if DB_AVAILABLE:
@@ -143,6 +171,11 @@ def dashboard_view():
                 except Exception:
                     p.decoded_legs = [p.legs_json] if p.legs_json else []
                 active_parlays.append(p)
+
+            # Show the tiers in order: Standard Cap, Booster Matrix, Bomb Target
+            tier_order = {"Standard Cap": 0, "Booster Matrix": 1, "Bomb Target": 2}
+            active_parlays.sort(key=lambda x: tier_order.get(x.category, 99))
+            micro_parlays = [p for p in active_parlays if p.category == "Micro Sandbox"]
             
             # Fetch recent micro bets / straight bets for the archive ledger
             picks = session.query(PickLog).order_by(PickLog.id.desc()).limit(25).all()
@@ -162,6 +195,7 @@ def dashboard_view():
         quarantined_count=quarantined_count,
         roi="+0.00",
         active_parlays=active_parlays,
+        micro_parlays=micro_parlays,
         picks=picks
     )
 
