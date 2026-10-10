@@ -1,6 +1,7 @@
 import os
-import sqlite3
 import requests
+import psycopg2
+from psycopg2 import sql
 from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
 from flask import Flask, render_template_string
@@ -13,12 +14,11 @@ app = Flask(__name__)
 # ==========================================
 ODDS_API_KEY = os.environ.get("ODDS_API_KEY", "82dc7af21b915e1ca03b2b52118f9f13")
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "")
-DB_NAME = "bankroll_journal.db"
+DATABASE_URL = os.environ.get("DATABASE_URL")  # Pulled automatically from Railway
 SHARP_BOOK = "pinnacle"
 RETAIL_BOOKS = ["draftkings", "fanduel", "betmgm"]
 MINIMUM_EDGE_PERCENTAGE = 0.025
 
-# ACTIVE INJURY SCREENING BLACKLIST (Excluding verified injured athletes like CeeDee Lamb)
 INJURED_PLAYERS_BLACKLIST = ["CeeDee Lamb"]
 
 VALID_NFL_TEAMS = [
@@ -32,7 +32,6 @@ VALID_NFL_TEAMS = [
     "Seattle Seahawks", "Tampa Bay Buccaneers", "Tennessee Titans", "Washington Commanders"
 ]
 
-# FACT-CHECKED 2026 SEASON TEAM STATS (Sourced from official NFL / TeamRankings data)
 TEAM_STATS_BASELINE = {
     "Arizona Cardinals": {"off": 21.8, "def": 24.5},
     "Atlanta Falcons": {"off": 24.0, "def": 23.0},
@@ -104,15 +103,22 @@ def decimal_to_american(dec):
         return str(dec)
 
 # ==========================================
-# JOURNAL & ARCHIVE ENGINE (DEDUPLICATED)
+# POSTGRESQL DATABASE ENGINE
 # ==========================================
+def get_db_connection():
+    if not DATABASE_URL:
+        return None
+    return psycopg2.connect(DATABASE_URL)
+
 def init_db():
+    conn = get_db_connection()
+    if not conn: return
     try:
-        conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
+        # Note: Postgres uses SERIAL instead of AUTOINCREMENT
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS bets (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 date TEXT,
                 bet_type TEXT,
                 description TEXT,
@@ -124,14 +130,14 @@ def init_db():
         ''')
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS bot_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 timestamp TEXT,
                 message TEXT
             )
         ''')
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS parlay_archive (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 timestamp TEXT,
                 tier TEXT,
                 stake TEXT,
@@ -142,7 +148,7 @@ def init_db():
         ''')
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS straight_archive (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 timestamp TEXT,
                 matchup TEXT,
                 bet_desc TEXT,
@@ -152,97 +158,103 @@ def init_db():
             )
         ''')
         conn.commit()
-        conn.close()
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"DB Init Error: {e}")
+    finally:
+        if conn: conn.close()
 
 def log_bet(bet_type, description, staked, potential_payout):
+    conn = get_db_connection()
+    if not conn: return
     try:
-        init_db()
-        conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
         today_str = datetime.now().strftime("%Y-%m-%d")
-        cursor.execute("SELECT COUNT(*) FROM bets WHERE description = ? AND date LIKE ?", (description, f"{today_str}%"))
+        # Note: Postgres uses %s for variables, not ?
+        cursor.execute("SELECT COUNT(*) FROM bets WHERE description = %s AND date LIKE %s", (description, f"{today_str}%"))
         if cursor.fetchone()[0] == 0:
             date_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             cursor.execute('''
                 INSERT INTO bets (date, bet_type, description, staked, potential_payout, status)
-                VALUES (?, ?, ?, ?, ?, 'PENDING')
+                VALUES (%s, %s, %s, %s, %s, 'PENDING')
             ''', (date_str, bet_type, description, staked, potential_payout))
             conn.commit()
-        conn.close()
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"Log Bet Error: {e}")
+    finally:
+        if conn: conn.close()
 
 def log_system_event(message):
+    conn = get_db_connection()
+    if not conn: return
     try:
-        init_db()
-        conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        cursor.execute("INSERT INTO bot_logs (timestamp, message) VALUES (?, ?)", (timestamp, message))
+        cursor.execute("INSERT INTO bot_logs (timestamp, message) VALUES (%s, %s)", (timestamp, message))
         conn.commit()
-        conn.close()
-    except Exception:
+    except Exception as e:
         pass
+    finally:
+        if conn: conn.close()
 
 def log_parlay_archive(tier, stake, multiplier, payout, legs):
+    conn = get_db_connection()
+    if not conn: return
     try:
-        init_db()
-        conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
         today_str = datetime.now().strftime("%Y-%m-%d")
         legs_str = " | ".join(legs) if isinstance(legs, list) else str(legs)
-        cursor.execute("SELECT COUNT(*) FROM parlay_archive WHERE tier = ? AND legs = ? AND timestamp LIKE ?", (tier, legs_str, f"{today_str}%"))
+        cursor.execute("SELECT COUNT(*) FROM parlay_archive WHERE tier = %s AND legs = %s AND timestamp LIKE %s", (tier, legs_str, f"{today_str}%"))
         if cursor.fetchone()[0] == 0:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             cursor.execute('''
                 INSERT INTO parlay_archive (timestamp, tier, stake, multiplier, potential_payout, legs)
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s)
             ''', (timestamp, tier, stake, multiplier, payout, legs_str))
             conn.commit()
-        conn.close()
-    except Exception:
+    except Exception as e:
         pass
+    finally:
+        if conn: conn.close()
 
 def log_straight_archive(matchup, bet_desc, odds, edge, indicator):
+    conn = get_db_connection()
+    if not conn: return
     try:
-        init_db()
-        conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
         today_str = datetime.now().strftime("%Y-%m-%d")
-        cursor.execute("SELECT COUNT(*) FROM straight_archive WHERE matchup = ? AND bet_desc = ? AND timestamp LIKE ?", (matchup, bet_desc, f"{today_str}%"))
+        cursor.execute("SELECT COUNT(*) FROM straight_archive WHERE matchup = %s AND bet_desc = %s AND timestamp LIKE %s", (matchup, bet_desc, f"{today_str}%"))
         if cursor.fetchone()[0] == 0:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             cursor.execute('''
                 INSERT INTO straight_archive (timestamp, matchup, bet_desc, odds, edge, indicator)
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s)
             ''', (timestamp, matchup, bet_desc, odds, edge, indicator))
             conn.commit()
-        conn.close()
-    except Exception:
+    except Exception as e:
         pass
+    finally:
+        if conn: conn.close()
 
 def calculate_roi():
+    conn = get_db_connection()
+    if not conn: return 0.0, 0.0, 0.0
     try:
-        init_db()
-        conn = sqlite3.connect(DB_NAME)
         cursor = conn.cursor()
         cursor.execute("SELECT SUM(staked), SUM(profit_loss) FROM bets WHERE status != 'PENDING'")
         res = cursor.fetchone()
-        conn.close()
         total_staked = res[0] or 0.0
         total_profit = res[1] or 0.0
         roi = (total_profit / total_staked * 100) if total_staked > 0 else 0.0
         return total_staked, total_profit, round(roi, 2)
-    except Exception:
+    except Exception as e:
         return 0.0, 0.0, 0.0
+    finally:
+        if conn: conn.close()
 
 # ==========================================
 # STATS & INJURY FILTERING
 # ==========================================
 def fetch_team_stats_dict():
-    # Returns verified 2026 team baseline stats
     return TEAM_STATS_BASELINE.copy()
 
 def fetch_healthy_player_leaders():
@@ -286,7 +298,7 @@ def fetch_healthy_player_leaders():
     return [p for p in fallback if p['player'] not in INJURED_PLAYERS_BLACKLIST]
 
 def run_autonomous_research_engine():
-    log_system_event("Autonomous Research Engine active with fact-checked 2026 baseline metrics.")
+    log_system_event("Autonomous Research Engine active with PostgreSQL backend.")
 
 def run_trend_sniffer():
     return [
@@ -470,24 +482,6 @@ def fetch_terminal_data():
                 log_bet("Straight Edge Pick", bet_desc, 50.0, round(50.0 * retail_best, 2))
                 log_straight_archive(matchup_str, bet_desc, odds_str, edge_str, indicator_str)
 
-    if not straight_picks and games:
-        g = games[0]
-        home = g.get('home_team', 'Las Vegas Raiders')
-        away = g.get('away_team', 'Kansas City Chiefs')
-        matchup_str = f"{away} @ {home}"
-        bet_desc = f"{home} Moneyline on DraftKings (Model Edge Confirmed)"
-        odds_str = "-110"
-        edge_str = "+3.5%"
-        indicator_str = "🔥 HIGH VALUE"
-        straight_picks.append({
-            "matchup": matchup_str,
-            "bet": bet_desc,
-            "odds": odds_str,
-            "edge": edge_str,
-            "indicator": indicator_str
-        })
-        log_straight_archive(matchup_str, bet_desc, odds_str, edge_str, indicator_str)
-
     total_staked, total_profit, roi = calculate_roi()
     bankroll_summary = f"Total Staked: ${total_staked:,.2f} | Net Profit: ${total_profit:,.2f} | ROI: {roi}%"
 
@@ -584,17 +578,6 @@ HTML_TEMPLATE = """
         .compact-stats { padding: 10px 14px; margin-bottom: 16px; }
         .compact-stats table th, .compact-stats table td { padding: 6px 8px; font-size: 11px; }
 
-        .pick-row { 
-            background: rgba(255, 255, 255, 0.02); 
-            border: 1px solid var(--border-gold); 
-            border-radius: 8px; 
-            padding: 10px 12px; 
-            margin-bottom: 8px; 
-            display: flex; 
-            justify-content: space-between; 
-            align-items: center; 
-        }
-        
         .indicator-badge { 
             background: rgba(212, 175, 55, 0.12); 
             color: var(--gold-vegas); 
@@ -653,7 +636,7 @@ HTML_TEMPLATE = """
     <div class="container">
         <div class="header">
             <div class="logo">🎲 OGBREEZE <span>PARLAYS TERMINAL</span></div>
-            <div class="live-badge"><div class="pulse"></div>FACT-CHECKED 2026 STATS ACTIVE</div>
+            <div class="live-badge"><div class="pulse"></div>POSTGRESQL ENGINE ACTIVE</div>
         </div>
 
         <div class="card-box" style="background: rgba(0, 230, 118, 0.03); border-color: rgba(0, 230, 118, 0.2); padding: 12px 16px;">
@@ -681,7 +664,6 @@ HTML_TEMPLATE = """
         <!-- 3-TIER STRICT PARLAY HUB -->
         <h2 style="font-size: 15px; margin-bottom: 12px; color: var(--gold-vegas);">⚡ Ogbreeze Tiered Parlay Command Center</h2>
         <div class="grid-3">
-            <!-- Tier 1: $50 Parlay Cap -->
             <div class="parlay-card">
                 <div>
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
@@ -701,7 +683,6 @@ HTML_TEMPLATE = """
                 </div>
             </div>
 
-            <!-- Tier 2: $25 Parlay (Min 50x) -->
             <div class="parlay-card">
                 <div>
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
@@ -721,7 +702,6 @@ HTML_TEMPLATE = """
                 </div>
             </div>
 
-            <!-- Tier 3: $15-$25 Parlay (Min $1000 Winnings) -->
             <div class="parlay-card" style="border-color: rgba(255, 23, 68, 0.4); background: linear-gradient(135deg, rgba(255, 23, 68, 0.1) 0%, rgba(12, 14, 20, 0.98) 100%);">
                 <div>
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
@@ -745,9 +725,6 @@ HTML_TEMPLATE = """
         <!-- SUB-THRESHOLD / MICRO SANDBOX -->
         <div class="card-box" style="border-color: rgba(156, 163, 175, 0.25);">
             <h2 style="color: var(--text-muted);">📥 Sub-Threshold / Micro Sandbox (Filtered Parlays)</h2>
-            <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 10px;">
-                Active tickets below 50x multiplier or $1,000 minimum payout thresholds automatically routed here.
-            </div>
             <table>
                 <tr><th>Ticket Description</th><th>Stake</th><th>Multiplier</th><th>Potential Return</th><th>Status</th></tr>
                 {% for sub in sub_threshold_parlays %}
@@ -764,10 +741,7 @@ HTML_TEMPLATE = """
 
         <!-- PERMANENT PARLAY ARCHIVE VAULT -->
         <div class="card-box" style="border-color: rgba(212, 175, 55, 0.35);">
-            <h2>🗄️ Permanent Parlay Archive Vault (Deduplicated History Log)</h2>
-            <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 10px;">
-                Unique daily parlays generated and archived securely without duplication.
-            </div>
+            <h2>🗄️ Permanent Parlay Archive Vault (PostgreSQL Engine)</h2>
             <table>
                 <tr><th>Timestamp</th><th>Tier / Category</th><th>Stake</th><th>Multiplier</th><th>Potential Payout</th><th>Legs / Description</th></tr>
                 {% for row in parlay_archive_rows %}
@@ -787,9 +761,6 @@ HTML_TEMPLATE = """
             <!-- Straight Bets Archive -->
             <div class="card-box" style="margin-bottom:0;">
                 <h2>🔥 High-Confidence Straight Bet Edge Archive</h2>
-                <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 10px;">
-                    Deduplicated model-backed straight edge picks.
-                </div>
                 <table>
                     <tr><th>Timestamp</th><th>Matchup</th><th>Selection</th><th>Odds</th><th>Edge</th></tr>
                     {% for s_row in straight_archive_rows %}
@@ -829,7 +800,6 @@ HTML_TEMPLATE = """
                     <span style="font-size: 9px; color: var(--text-muted);">{{ game.commence_time[:10] if game.commence_time else '' }}</span>
                 </div>
                 
-                <!-- Matchup Tale of the Tape Edge -->
                 <div style="background: rgba(212, 175, 55, 0.05); border: 1px solid var(--border-gold); border-radius: 6px; padding: 8px; margin-bottom: 8px; font-size: 11px;">
                     <div style="display: flex; justify-content: space-between; margin-bottom: 3px;">
                         <span style="color: var(--text-muted);">⚡ Better Offense:</span>
@@ -873,7 +843,7 @@ HTML_TEMPLATE = """
         </div>
 
         <div class="card-box">
-            <h2>📊 SQLite Bankroll Journal</h2>
+            <h2>📊 PostgreSQL Bankroll Journal</h2>
             <table>
                 <tr><th>Timestamp</th><th>Type</th><th>Description</th><th>Stake</th><th>Status</th></tr>
                 {% for row in history %}
@@ -906,20 +876,22 @@ def dashboard():
     games, straight_picks, standard_parlay, booster_parlay, bomb_parlay, sub_threshold_parlays, player_leaders, bankroll_summary, trend_insights = fetch_terminal_data()
     
     history, logs, parlay_archive_rows, straight_archive_rows = [], [], [], []
-    try:
-        conn = sqlite3.connect(DB_NAME)
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM bets ORDER BY id DESC LIMIT 15")
-        history = cursor.fetchall()
-        cursor.execute("SELECT * FROM bot_logs ORDER BY id DESC LIMIT 15")
-        logs = cursor.fetchall()
-        cursor.execute("SELECT * FROM parlay_archive ORDER BY id DESC LIMIT 30")
-        parlay_archive_rows = cursor.fetchall()
-        cursor.execute("SELECT * FROM straight_archive ORDER BY id DESC LIMIT 20")
-        straight_archive_rows = cursor.fetchall()
-        conn.close()
-    except Exception:
-        pass
+    conn = get_db_connection()
+    if conn:
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM bets ORDER BY id DESC LIMIT 15")
+            history = cursor.fetchall()
+            cursor.execute("SELECT * FROM bot_logs ORDER BY id DESC LIMIT 15")
+            logs = cursor.fetchall()
+            cursor.execute("SELECT * FROM parlay_archive ORDER BY id DESC LIMIT 30")
+            parlay_archive_rows = cursor.fetchall()
+            cursor.execute("SELECT * FROM straight_archive ORDER BY id DESC LIMIT 20")
+            straight_archive_rows = cursor.fetchall()
+        except Exception as e:
+            print(f"Fetch Error: {e}")
+        finally:
+            conn.close()
     
     return render_template_string(
         HTML_TEMPLATE, 
