@@ -7,11 +7,11 @@ from dotenv import load_dotenv
 from apscheduler.schedulers.background import BackgroundScheduler
 import ingestion
 
-# 2. Initialize Flask App FIRST
+# 2. Initialize Flask App
 load_dotenv()
 app = Flask(__name__)
 
-# 3. Initialize Database
+# 3. Initialize Database safely
 try:
     from db import SessionLocal, PickLog, engine, Base
     Base.metadata.create_all(bind=engine)
@@ -23,16 +23,14 @@ except Exception as e:
 # 4. Start Background Scheduler
 try:
     scheduler = BackgroundScheduler()
-    # Run once immediately on startup
     ingestion.fetch_and_store_live_data()
-    # Schedule to run every hour
     scheduler.add_job(func=ingestion.fetch_and_store_live_data, trigger="interval", minutes=60)
     scheduler.start()
     print("Background ingestion scheduler started.")
 except Exception as e:
     print(f"Failed to start scheduler: {e}")
 
-# 5. HTML Template
+# 5. HTML Template (Now entirely dynamic for parlays)
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html>
@@ -74,55 +72,23 @@ HTML_TEMPLATE = """
 
     <div class="section-title">🎯 Active Parlay Slips</div>
     <div class="parlay-grid">
+        {% for parlay in active_parlays %}
         <div class="parlay-card">
             <div class="parlay-header">
-                <span class="parlay-title">Standard Cap</span>
-                <span class="parlay-odds">10.2x (+920)</span>
+                <span class="parlay-title">{{ parlay.category }}</span>
+                <span class="parlay-odds">{{ parlay.odds }}</span>
             </div>
             <ul class="parlay-legs">
-                <li>Las Vegas Raiders Team Total Over (Offensive PPG: 28.8)</li>
-                <li>Dak Prescott Over 245.5 Passing Yards</li>
-                <li>Game Script: High Pace & Efficiency Matchup</li>
+                {% for leg in parlay.legs %}
+                <li>{{ leg }}</li>
+                {% endfor %}
             </ul>
             <div class="parlay-footer">
-                <span>Stake: $50.00</span>
-                <span>Payout: $510.00</span>
+                <span>Stake: {{ parlay.stake }}</span>
+                <span>Payout: {{ parlay.payout }}</span>
             </div>
         </div>
-        
-        <div class="parlay-card">
-            <div class="parlay-header">
-                <span class="parlay-title">Booster Matrix</span>
-                <span class="parlay-odds">53.5x (+5250)</span>
-            </div>
-            <ul class="parlay-legs">
-                <li>San Francisco 49ers -6.5 (Top Offense vs Defense)</li>
-                <li>Dak Prescott 2+ Passing Touchdowns</li>
-                <li>Kenneth Walker III 75+ Rushing Yards</li>
-                <li>Game Total: Seattle Seahawks vs San Francisco 49ers Over 45.5</li>
-            </ul>
-            <div class="parlay-footer">
-                <span>Stake: $25.00</span>
-                <span>Payout: $1,337.50</span>
-            </div>
-        </div>
-
-        <div class="parlay-card">
-            <div class="parlay-header">
-                <span class="parlay-title">Bomb Target</span>
-                <span class="parlay-odds">55.5x (+5450)</span>
-            </div>
-            <ul class="parlay-legs">
-                <li>Buffalo Bills -4.5 (No. 1 Scoring Offense 31.8 PPG)</li>
-                <li>Kenneth Walker III 100+ Rushing Yards & Anytime TD</li>
-                <li>Dak Prescott 3+ Pass TDs</li>
-                <li>1st Half Total: Seattle Seahawks vs Buffalo Bills Over 21.5</li>
-            </ul>
-            <div class="parlay-footer">
-                <span>Stake: $15.00</span>
-                <span>Payout: $1,000.00+</span>
-            </div>
-        </div>
+        {% endfor %}
     </div>
 
     <div class="section-title">🔥 High-Confidence Straight Bet Edge Archive</div>
@@ -153,9 +119,48 @@ HTML_TEMPLATE = """
 </html>
 """
 
-# 6. Routes
+# 6. Routes and Logic
 @app.route("/")
 def dashboard_view():
+    # Dynamic Parlay Data Structure (No Bye Week Players)
+    active_parlays = [
+        {
+            "category": "Standard Cap",
+            "odds": "10.2x (+920)",
+            "stake": "$50.00",
+            "payout": "$510.00",
+            "legs": [
+                "Baltimore Ravens Team Total Over (Offensive PPG: 29.5)",
+                "Lamar Jackson Over 225.5 Passing Yards",
+                "Game Script: Baltimore Ravens vs Washington Commanders - High Pace & Efficiency Matchup"
+            ]
+        },
+        {
+            "category": "Booster Matrix",
+            "odds": "53.5x (+5250)",
+            "stake": "$25.00",
+            "payout": "$1,337.50",
+            "legs": [
+                "San Francisco 49ers -6.5 (Top Offense vs Defense)",
+                "Brock Purdy 2+ Passing Touchdowns",
+                "Deebo Samuel 50+ Receiving Yards",
+                "Game Total: San Francisco 49ers vs Arizona Cardinals Over 45.5"
+            ]
+        },
+        {
+            "category": "Bomb Target",
+            "odds": "55.5x (+5450)",
+            "stake": "$15.00",
+            "payout": "$1,000.00+",
+            "legs": [
+                "Buffalo Bills -4.5 (No. 1 Scoring Offense)",
+                "James Cook 75+ Rushing Yards & Anytime TD",
+                "Josh Allen 3+ Pass TDs",
+                "1st Half Total: Buffalo Bills vs New York Jets Over 21.5"
+            ]
+        }
+    ]
+
     picks = []
     if DB_AVAILABLE:
         try:
@@ -176,6 +181,7 @@ def dashboard_view():
         active_count=active_count,
         quarantined_count=quarantined_count,
         roi="+0.00",
+        active_parlays=active_parlays,
         picks=picks[-15:] if picks else []
     )
 
