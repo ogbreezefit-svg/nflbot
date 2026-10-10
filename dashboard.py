@@ -1,37 +1,22 @@
-from db import SessionLocal, PickLog
-from sqlalchemy import func
+# Inside execute_shadow_mode(proposed_pick):
 
-def print_shadow_metrics():
-    session = SessionLocal()
-    
-    total_picks = session.query(PickLog).filter(PickLog.is_shadow == True).count()
-    quarantined = session.query(PickLog).filter(PickLog.status == "QUARANTINED").count()
-    won = session.query(PickLog).filter(PickLog.status == "WON").count()
-    lost = session.query(PickLog).filter(PickLog.status == "LOST").count()
-    
-    # Calculate Average CLV Beat
-    avg_clv = session.query(func.avg(PickLog.clv_edge)).filter(PickLog.status != "QUARANTINED").scalar() or 0.0
-    
-    # Calculate Shadow ROI ($50 per unit)
-    total_staked = (won + lost) * 50.0
-    # Assuming standard -110 odds (+45.45 profit per win)
-    total_profit = (won * 45.45) - (lost * 50.0)
-    roi = (total_profit / total_staked * 100) if total_staked > 0 else 0.0
+# Determine a clean display name if it's a parlay or multi-leg ticket
+display_name = proposed_press_name = proposed_pick.get("player_name")
+if not display_name and "legs" in proposed_pick:
+    # Auto-generate a readable summary for the parlay legs
+    leg_summaries = [f"{leg.get('market')} {leg.get('pick_side')} {leg.get('line')}" for leg in proposed_pick.get("legs", [])]
+    display_name = " | ".join(leg_summaries) if leg_summaries else "Tiered Parlay Ticket"
 
-    print("==========================================")
-    print("      📊 SHADOW MODE PERFORMANCE REPORT   ")
-    print("==========================================")
-    print(f"Total Evaluated Picks: {total_picks}")
-    print(f"Quarantined by Gatekeeper: {quarantined} ({quarantined/max(total_picks,1)*100:.1f}%)")
-    print(f"Active Bets Record: {won}W - {lost}L")
-    print(f"Estimated ROI: {roi:.2f}%")
-    print(f"Avg CLV Edge: {avg_clv:+.2f} points vs Pinnacle Close")
-    print("==========================================")
-    
-    if avg_clv > 0:
-        print("🟢 Market Beat Status: BEATING THE CLOSING LINE (Valid Edge)")
-    else:
-        print("🔴 Market Beat Status: LAG BEHAVIOR (Refine Selection Model)")
-
-if __name__ == "__main__":
-    print_shadow_metrics()
+new_pick = PickLog(
+    player_name=display_name, # <-- Uses the generated summary instead of leaving it blank
+    event_id=proposed_pick.get("event_id"),
+    market_name=proposed_pick.get("market", "tiered_parlay"),
+    pick_side=proposed_pick.get("pick_side", "MULTI"),
+    picked_line=proposed_pick.get("line", 0.0),
+    picked_odds=proposed_pick.get("odds", 100),
+    kickoff_time=proposed_pick.get("kickoff_time"),
+    status="ACTIVE" if is_valid else "QUARANTINED",
+    quarantine_reason=reason if not is_valid else None,
+    stake=proposed_pick.get("stake", 50.0),
+    is_shadow=True
+)

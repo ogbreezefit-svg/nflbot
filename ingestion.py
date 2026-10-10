@@ -38,3 +38,16 @@ class SportsDataAPI:
         }
         response = requests.get(url, params=params)
         return response.json()
+    def get_upcoming_nfl_games(self):
+        """Fetches all upcoming NFL games and their event IDs from The Odds API."""
+        url = "https://api.the-odds-api.com/v4/sports/americanfootball_nfl/events"
+        params = {
+            "apiKey": self.odds_key
+        }
+        try:
+            response = requests.get(url, params=params)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            print(f"Failed to fetch NFL schedule: {e}")
+            return []
