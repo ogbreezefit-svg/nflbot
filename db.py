@@ -71,3 +71,18 @@ class ParlaySlip(Base):
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
 Base.metadata.create_all(bind=engine)
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Boolean, Text
+
+# ... (keep your existing connection setup up to ParlaySlip)
+
+class ParlaySlip(Base):
+    __tablename__ = "parlays"
+    
+    id = Column(Integer, primary_key=True)
+    category = Column(String)       
+    odds = Column(String)           
+    stake = Column(String)          
+    payout = Column(String)         
+    legs_json = Column(Text)        # Safely stores serialized list data
+    status = Column(String, default="ACTIVE")
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

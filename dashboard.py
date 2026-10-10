@@ -1,4 +1,5 @@
 import os
+import json
 from datetime import datetime, timezone
 from flask import Flask, render_template_string
 from dotenv import load_dotenv
@@ -20,7 +21,6 @@ except Exception as e:
 # Safe Background Scheduler Initialization
 try:
     scheduler = BackgroundScheduler()
-    # Schedule ingestion to run hourly in background without blocking app startup
     scheduler.add_job(func=ingestion.fetch_and_store_live_data, trigger="interval", minutes=60)
     scheduler.start()
     print("Background ingestion scheduler started.")
@@ -78,7 +78,7 @@ HTML_TEMPLATE = """
                     <span class="parlay-odds">{{ parlay.odds }}</span>
                 </div>
                 <ul class="parlay-legs">
-                    {% for leg in parlay.legs %}
+                    {% for leg in parlay.decoded_legs %}
                     <li>{{ leg }}</li>
                     {% endfor %}
                 </ul>
@@ -134,8 +134,18 @@ def dashboard_view():
     if DB_AVAILABLE:
         try:
             session = SessionLocal()
-            active_parlays = session.query(ParlaySlip).filter(ParlaySlip.status == "ACTIVE").all()
-            picks = session.query(PickLog).order_by(PickLog.id.desc()).limit(15).all()
+            
+            # Fetch active parlays and decode their JSON legs safely in Python
+            raw_parlays = session.query(ParlaySlip).filter(ParlaySlip.status == "ACTIVE").all()
+            for p in raw_parlays:
+                try:
+                    p.decoded_legs = json.loads(p.legs_json) if p.legs_json else []
+                except Exception:
+                    p.decoded_legs = [p.legs_json] if p.legs_json else []
+                active_parlays.append(p)
+            
+            # Fetch recent micro bets / straight bets for the archive ledger
+            picks = session.query(PickLog).order_by(PickLog.id.desc()).limit(25).all()
             session.close()
         except Exception as e:
             print(f"Query error: {e}")
