@@ -163,3 +163,24 @@ def dashboard_view():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
+    from apscheduler.schedulers.background import BackgroundScheduler
+import ingestion  # Assumes ingestion.py has a main function like fetch_live_data()
+
+scheduler = BackgroundScheduler()
+# Set this to run your script every hour (or however often you need)
+scheduler.add_job(func=ingestion.fetch_live_data, trigger="interval", minutes=60)
+scheduler.start()
+from apscheduler.schedulers.background import BackgroundScheduler
+import ingestion
+
+# Start the background data ingestion (runs every 60 minutes)
+try:
+    scheduler = BackgroundScheduler()
+    # Run it once immediately on startup
+    ingestion.fetch_and_store_live_data()
+    # Then schedule it to run every hour
+    scheduler.add_job(func=ingestion.fetch_and_store_live_data, trigger="interval", minutes=60)
+    scheduler.start()
+    print("Background ingestion scheduler started.")
+except Exception as e:
+    print(f"Failed to start scheduler: {e}")
