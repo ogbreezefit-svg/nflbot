@@ -1,0 +1,38 @@
+import requests
+import os
+
+url = "https://tank01-nfl-live-in-game-real-time-statistics-nfl.p.rapidapi.com/getNFLTeams"
+
+querystring = {
+    "sortBy": "standings",
+    "rosters": "false",
+    "schedules": "false",
+    "topPerformers": "true",
+    "teamStats": "true",
+    "teamStatsSeason": "2026"
+}
+
+# Best practice: Avoid hardcoding secrets. Store the API key in an environment variable.
+api_key = os.getenv("RAPIDAPI_KEY", "7d0eec2fedmsha8e22fd38fe6121p179e2ajsnf5108d226f33")
+
+headers = {
+    "x-rapidapi-host": "tank01-nfl-live-in-game-real-time-statistics-nfl.p.rapidapi.com",
+    "x-rapidapi-key": api_key
+}
+
+try:
+    response = requests.get(url, headers=headers, params=querystring)
+    response.raise_for_status()
+    data = response.json()
+    
+    # The API returns the list of team objects inside the 'body' key
+    teams = data.get("body", [])
+    
+    # Example: Print the first team's basic info
+    if teams:
+        first_team = teams[0]
+        print(f"Successfully retrieved {len(teams)} teams.")
+        print(f"Top team: {first_team.get('teamCity')} {first_team.get('teamName')}")
+    
+except requests.exceptions.RequestException as e:
+    print(f"API Request failed: {e}")
