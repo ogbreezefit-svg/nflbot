@@ -2,35 +2,31 @@ import os
 from datetime import datetime, timezone
 from flask import Flask, render_template_string
 from dotenv import load_dotenv
-
-# 1. Import scheduler and ingestion
 from apscheduler.schedulers.background import BackgroundScheduler
 import ingestion
 
-# 2. Initialize Flask App
 load_dotenv()
 app = Flask(__name__)
 
-# 3. Initialize Database safely
+# Initialize Database safely
 try:
-    from db import SessionLocal, PickLog, engine, Base
+    from db import SessionLocal, PickLog, ParlaySlip, engine, Base
     Base.metadata.create_all(bind=engine)
     DB_AVAILABLE = True
 except Exception as e:
     print(f"Database initialization warning: {e}")
     DB_AVAILABLE = False
 
-# 4. Start Background Scheduler
+# Safe Background Scheduler Initialization
 try:
     scheduler = BackgroundScheduler()
-    ingestion.fetch_and_store_live_data()
+    # Schedule ingestion to run hourly in background without blocking app startup
     scheduler.add_job(func=ingestion.fetch_and_store_live_data, trigger="interval", minutes=60)
     scheduler.start()
     print("Background ingestion scheduler started.")
 except Exception as e:
     print(f"Failed to start scheduler: {e}")
 
-# 5. HTML Template (Now entirely dynamic for parlays)
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html>
@@ -55,8 +51,10 @@ HTML_TEMPLATE = """
         th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #30363d; font-size: 14px; }
         th { background: #21262d; color: #8b949e; }
         .badge-active { color: #3fb950; font-weight: bold; }
+        .badge-archived { color: #8b949e; font-weight: bold; }
         .badge-blocked { color: #f85149; font-weight: bold; }
         .badge-won { color: #58a6ff; font-weight: bold; }
+        .empty-state { text-align: center; color: #8b949e; padding: 20px; font-style: italic; }
     </style>
 </head>
 <body>
@@ -72,23 +70,27 @@ HTML_TEMPLATE = """
 
     <div class="section-title">🎯 Active Parlay Slips</div>
     <div class="parlay-grid">
-        {% for parlay in active_parlays %}
-        <div class="parlay-card">
-            <div class="parlay-header">
-                <span class="parlay-title">{{ parlay.category }}</span>
-                <span class="parlay-odds">{{ parlay.odds }}</span>
+        {% if active_parlays %}
+            {% for parlay in active_parlays %}
+            <div class="parlay-card">
+                <div class="parlay-header">
+                    <span class="parlay-title">{{ parlay.category }}</span>
+                    <span class="parlay-odds">{{ parlay.odds }}</span>
+                </div>
+                <ul class="parlay-legs">
+                    {% for leg in parlay.legs %}
+                    <li>{{ leg }}</li>
+                    {% endfor %}
+                </ul>
+                <div class="parlay-footer">
+                    <span>Stake: {{ parlay.stake }}</span>
+                    <span>Payout: {{ parlay.payout }}</span>
+                </div>
             </div>
-            <ul class="parlay-legs">
-                {% for leg in parlay.legs %}
-                <li>{{ leg }}</li>
-                {% endfor %}
-            </ul>
-            <div class="parlay-footer">
-                <span>Stake: {{ parlay.stake }}</span>
-                <span>Payout: {{ parlay.payout }}</span>
-            </div>
-        </div>
-        {% endfor %}
+            {% endfor %}
+        {% else %}
+            <div class="empty-state" style="grid-column: 1 / -1;">No active parlays generated yet. Engine scanning upcoming matchups...</div>
+        {% endif %}
     </div>
 
     <div class="section-title">🔥 High-Confidence Straight Bet Edge Archive</div>
@@ -100,72 +102,40 @@ HTML_TEMPLATE = """
             <th>Status</th>
             <th>Odds</th>
         </tr>
-        {% for p in picks %}
-        <tr>
-            <td>{{ p.id }}</td>
-            <td>{{ p.player_name }}</td>
-            <td>{{ p.market_name }}</td>
-            <td>
-                {% if p.status == 'ACTIVE' %}<span class="badge-active">🟢 ACTIVE</span>
-                {% elif p.status == 'QUARANTINED' %}<span class="badge-blocked">🚨 BLOCKED</span>
-                {% elif p.status == 'WON' %}<span class="badge-won">✅ WON</span>
-                {% else %}{{ p.status }}{% endif %}
-            </td>
-            <td>{{ p.picked_odds }}</td>
-        </tr>
-        {% endfor %}
+        {% if picks %}
+            {% for p in picks %}
+            <tr>
+                <td>{{ p.id }}</td>
+                <td>{{ p.player_name }}</td>
+                <td>{{ p.market_name }}</td>
+                <td>
+                    {% if p.status == 'ACTIVE' %}<span class="badge-active">🟢 ACTIVE</span>
+                    {% elif p.status == 'ARCHIVED' %}<span class="badge-archived">⚪ ARCHIVED</span>
+                    {% elif p.status == 'QUARANTINED' %}<span class="badge-blocked">🚨 BLOCKED</span>
+                    {% elif p.status == 'WON' %}<span class="badge-won">✅ WON</span>
+                    {% else %}{{ p.status }}{% endif %}
+                </td>
+                <td>{{ p.picked_odds }}</td>
+            </tr>
+            {% endfor %}
+        {% else %}
+            <tr><td colspan="5" class="empty-state">No micro bets logged in the archive yet.</td></tr>
+        {% endif %}
     </table>
 </body>
 </html>
 """
 
-# 6. Routes and Logic
 @app.route("/")
 def dashboard_view():
-    # Dynamic Parlay Data Structure (No Bye Week Players)
-    active_parlays = [
-        {
-            "category": "Standard Cap",
-            "odds": "10.2x (+920)",
-            "stake": "$50.00",
-            "payout": "$510.00",
-            "legs": [
-                "Baltimore Ravens Team Total Over (Offensive PPG: 29.5)",
-                "Lamar Jackson Over 225.5 Passing Yards",
-                "Game Script: Baltimore Ravens vs Washington Commanders - High Pace & Efficiency Matchup"
-            ]
-        },
-        {
-            "category": "Booster Matrix",
-            "odds": "53.5x (+5250)",
-            "stake": "$25.00",
-            "payout": "$1,337.50",
-            "legs": [
-                "San Francisco 49ers -6.5 (Top Offense vs Defense)",
-                "Brock Purdy 2+ Passing Touchdowns",
-                "Deebo Samuel 50+ Receiving Yards",
-                "Game Total: San Francisco 49ers vs Arizona Cardinals Over 45.5"
-            ]
-        },
-        {
-            "category": "Bomb Target",
-            "odds": "55.5x (+5450)",
-            "stake": "$15.00",
-            "payout": "$1,000.00+",
-            "legs": [
-                "Buffalo Bills -4.5 (No. 1 Scoring Offense)",
-                "James Cook 75+ Rushing Yards & Anytime TD",
-                "Josh Allen 3+ Pass TDs",
-                "1st Half Total: Buffalo Bills vs New York Jets Over 21.5"
-            ]
-        }
-    ]
-
+    active_parlays = []
     picks = []
+    
     if DB_AVAILABLE:
         try:
             session = SessionLocal()
-            picks = session.query(PickLog.id, PickLog.player_name, PickLog.market_name, PickLog.status, PickLog.picked_odds).all()
+            active_parlays = session.query(ParlaySlip).filter(ParlaySlip.status == "ACTIVE").all()
+            picks = session.query(PickLog).order_by(PickLog.id.desc()).limit(15).all()
             session.close()
         except Exception as e:
             print(f"Query error: {e}")
@@ -182,7 +152,7 @@ def dashboard_view():
         quarantined_count=quarantined_count,
         roi="+0.00",
         active_parlays=active_parlays,
-        picks=picks[-15:] if picks else []
+        picks=picks
     )
 
 if __name__ == "__main__":
