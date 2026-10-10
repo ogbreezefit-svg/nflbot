@@ -5,3 +5,6 @@ requests
 sqlalchemy
 psycopg2-binary
 gunicorn
+numpy
+scikit-learn
+joblib

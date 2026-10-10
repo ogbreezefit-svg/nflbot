@@ -29,6 +29,18 @@ if os.getenv("INGESTION_SCHEDULER_ENABLED", "true").strip().lower() in ("1", "tr
             func=ingestion.fetch_and_store_live_data, trigger="interval", minutes=60,
             next_run_time=datetime.now(timezone.utc), max_instances=1, coalesce=True,
         )
+        from backend_research import enabled, run_backend_research
+        if enabled():
+            scheduler.add_job(
+                func=run_backend_research,
+                trigger="interval",
+                hours=24,
+                id="backend_experimental_research",
+                next_run_time=datetime.now(timezone.utc),
+                max_instances=1,
+                coalesce=True,
+                replace_existing=True,
+            )
         scheduler.start()
         print("Background ingestion scheduler started.")
     except Exception as e:
