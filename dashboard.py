@@ -5,7 +5,7 @@ from flask import Flask, render_template_string
 from dotenv import load_dotenv
 from apscheduler.schedulers.background import BackgroundScheduler
 import ingestion
-from settlement import shadow_roi
+from weekly_stats import shadow_roi, weekly_pick_summary
 
 load_dotenv()
 app = Flask(__name__)
@@ -71,6 +71,63 @@ HTML_TEMPLATE = """
         <div class="metric">Quarantined / Review<span>{{ quarantined_count }}</span></div>
         <div class="metric">Settled Shadow ROI<span>{{ roi }}</span></div>
     </div>
+
+
+    <!-- WEEKLY_PICK_TRACKER -->
+    <div class="section-title">📊 Weekly Pick Record</div>
+    <p style="color: #8b949e; font-size: 12px;">
+        Monday–Sunday, Chicago time, grouped by game kickoff.
+        Counts stored pick records—not parlay tickets or untracked legs.
+        Win rate excludes pushes, pending picks, and review items.
+    </p>
+
+    {% if not weekly_available %}
+    <p class="badge-blocked">
+        Weekly results unavailable: the database could not be queried.
+    </p>
+    {% else %}
+    <div style="overflow-x: auto;">
+    <table>
+        <tr>
+            <th>Week</th>
+            <th>Wins</th>
+            <th>Losses</th>
+            <th>Pushes</th>
+            <th>Pending</th>
+            <th>Review</th>
+            <th>Other</th>
+            <th>Total</th>
+            <th>Win Rate</th>
+        </tr>
+        {% for week in weekly_summary.weeks %}
+        <tr>
+            <td>
+                {{ week.label }}
+                {% if week.current %}
+                <span class="badge-active"> • Current</span>
+                {% endif %}
+            </td>
+            <td class="badge-won">{{ week.wins }}</td>
+            <td>{{ week.losses }}</td>
+            <td>{{ week.pushes }}</td>
+            <td>{{ week.pending }}</td>
+            <td>{{ week.review }}</td>
+            <td>{{ week.other }}</td>
+            <td>{{ week.total }}</td>
+            <td>{{ week.win_rate }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+    </div>
+
+    {% if weekly_summary.undated %}
+    <p style="color: #d29922; font-size: 12px;">
+        {{ weekly_summary.undated }} pick record(s) have no kickoff time.
+        They are excluded from weekly totals—not assumed to belong
+        to the current week.
+    </p>
+    {% endif %}
+    {% endif %}
 
     <div class="section-title">🎯 Active Parlay Slips</div>
     <div class="parlay-grid">
@@ -165,10 +222,16 @@ def dashboard_view():
     total_picks = active_count = quarantined_count = 0
     roi = "N/A (no settled picks)"
     session = None
+    weekly_summary = weekly_pick_summary([])
+    weekly_available = False
     
     if DB_AVAILABLE:
         try:
             session = SessionLocal()
+            weekly_summary = weekly_pick_summary(
+                session.query(PickLog).all()
+            )
+            weekly_available = True
             total_picks = session.query(PickLog).count()
             active_count = session.query(PickLog).filter(
                 PickLog.status == "ACTIVE", PickLog.is_shadow.is_(True)
@@ -212,6 +275,8 @@ def dashboard_view():
         active_count=active_count,
         quarantined_count=quarantined_count,
         roi=roi,
+        weekly_summary=weekly_summary,
+        weekly_available=weekly_available,
         active_parlays=active_parlays,
         micro_parlays=micro_parlays,
         picks=picks
