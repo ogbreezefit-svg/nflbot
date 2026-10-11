@@ -95,6 +95,14 @@ ParlaySlip.paper_stake = Column(Float, nullable=True)
 ParlaySlip.paper_return = Column(Float, nullable=True)
 ParlaySlip.paper_profit = Column(Float, nullable=True)
 
+# Monster approval metadata. Legacy records remain unapproved.
+# publication_mode="MONSTER" identifies dedicated Monster records.
+ParlaySlip.research_qualified = Column(Boolean, nullable=True)
+ParlaySlip.prediction_approved = Column(Boolean, nullable=True)
+ParlaySlip.publication_approved = Column(Boolean, nullable=True)
+ParlaySlip.publication_approval_ref = Column(String, nullable=True)
+
+
 Index("uq_parlays_ticket_key", ParlaySlip.ticket_key, unique=True)
 
 
@@ -147,10 +155,18 @@ def init_db():
     """Create tables if they don't exist yet, then fix old tables."""
     Base.metadata.create_all(bind=engine)
     add_missing_columns()
-    existing = {c["name"] for c in inspect(engine).get_columns("picks")}
-    required = {c.name for c in PickLog.__table__.columns}
-    if not required.issubset(existing):
-        raise RuntimeError("Pick schema migration incomplete; check database logs.")
+    for model in (PickLog, ParlaySlip):
+        table_name = model.__tablename__
+        existing = {
+            c["name"] for c in inspect(engine).get_columns(table_name)
+        }
+        required = {c.name for c in model.__table__.columns}
+        if not required.issubset(existing):
+            missing = ", ".join(sorted(required - existing))
+            raise RuntimeError(
+                f"{table_name} schema migration incomplete; "
+                f"missing columns: {missing}. Check database logs."
+            )
     for model in (PickLog, ParlaySlip):
         for index in model.__table__.indexes:
             index.create(bind=engine, checkfirst=True)

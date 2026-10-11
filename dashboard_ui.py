@@ -34,7 +34,18 @@ def describe_pick(row):
 
 
 def ticket_display(slip):
-    is_trial = getattr(slip, "publication_mode", None) == "TRIAL"
+    publication_mode = getattr(slip, "publication_mode", None)
+    is_trial = publication_mode == "TRIAL"
+    is_monster = publication_mode == "MONSTER"
+    approval_ref = getattr(slip, "publication_approval_ref", None)
+    publication_approved = (
+        is_monster
+        and getattr(slip, "research_qualified", None) is True
+        and getattr(slip, "prediction_approved", None) is True
+        and getattr(slip, "publication_approved", None) is True
+        and isinstance(approval_ref, str)
+        and bool(approval_ref.strip())
+    )
 
     def paper_money(field):
         value = getattr(slip, field, None)
@@ -62,13 +73,21 @@ def ticket_display(slip):
         "legs": labels,
         "display_status": slip.status or "UNKNOWN",
         "is_trial": is_trial,
+        "is_monster": is_monster,
+        "publication_approved": publication_approved,
         "outcome": (
             getattr(slip, "outcome", None) or "UNTRACKED"
-            if is_trial else "UNTRACKED"
+            if is_trial or is_monster else "UNTRACKED"
         ),
         "research_label": (
             "Trial · Not validated · Simulated"
-            if is_trial else "Not research-qualified"
+            if is_trial else (
+                "Monster · Recorded research and publication approval"
+                if publication_approved else (
+                    "Monster · Not approved for publication"
+                    if is_monster else "Not research-qualified"
+                )
+            )
         ),
         "paper_return": paper_money("paper_return") if is_trial else "—",
         "paper_profit": paper_money("paper_profit") if is_trial else "—",

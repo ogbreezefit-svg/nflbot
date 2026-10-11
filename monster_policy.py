@@ -71,6 +71,9 @@ def eligible_candidate(row, now, slate_start, slate_end):
         "probability": probability,
         "decimal_odds": decimal_odds,
         "estimated_leg_ev": expected_gross - 1,
+        # Preserve source identity; downstream publication must validate it.
+        "bookmaker_key": row.get("bookmaker_key"),
+        "observation_key": row.get("observation_key"),
     }
 
 

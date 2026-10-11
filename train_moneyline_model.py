@@ -57,12 +57,16 @@ def main():
         artifact = output / f"experimental_moneyline_{stamp}.joblib"
         joblib.dump(bundle, artifact)
         report["experimental_artifact_name"] = artifact.name
+        report["experimental_artifact_sha256"] = hashlib.sha256(
+            artifact.read_bytes()
+        ).hexdigest()
         with (output / f"retrospective_predictions_{stamp}.csv").open("w", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=list(predictions[0]))
             writer.writeheader()
             writer.writerows(predictions)
     else:
         report["experimental_artifact_name"] = None
+        report["experimental_artifact_sha256"] = None
 
     (output / f"trainer_report_{stamp}.json").write_text(
         json.dumps(report, indent=2, allow_nan=False), encoding="utf-8")
