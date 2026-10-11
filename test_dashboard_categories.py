@@ -14,7 +14,8 @@ def dashboard_template():
             for target in node.targets
         ):
             if isinstance(node.value, ast.Constant):
-                return node.value.value
+                from monster_ui import add_monster_hero
+                return add_monster_hero(node.value.value)
     raise AssertionError("Template not found")
 
 
@@ -63,11 +64,17 @@ class DashboardCategoryTests(unittest.TestCase):
         ])
         for title in (
             "Micro Parlays", "Standard Parlays", "Boosted Parlays",
-            "Bomb Parlays", "Trial Parlays", "Tracked Picks",
+            "Bomb Parlays", "Weekly Monster", "Tracked Picks",
         ):
             self.assertIn(title, html)
         for number in range(101, 106):
             self.assertIn(f"Ticket #{number}", html)
+        self.assertNotIn("<h2>🎰 Trial Parlays</h2>", html)
+        hero = html.split(
+            '<section class="monster-hero"', 1
+        )[1].split("</section>", 1)[0]
+        self.assertIn("Ticket #105", hero)
+        self.assertIn("Selection 105", hero)
         self.assertIn("Additional tracked selection", html)
         self.assertNotIn("Show 1 more picks", html)
 

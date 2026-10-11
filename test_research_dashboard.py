@@ -18,7 +18,8 @@ def template_value():
     tree = ast.parse((ROOT / "dashboard.py").read_text())
     node = next(n for n in tree.body if isinstance(n, ast.Assign)
                 and any(isinstance(t, ast.Name) and t.id == "HTML_TEMPLATE" for t in n.targets))
-    return ast.literal_eval(node.value)
+    from monster_ui import add_monster_hero
+    return add_monster_hero(ast.literal_eval(node.value))
 
 def render(status, available=True, ticket=None):
     context = {
@@ -88,10 +89,12 @@ class ResearchDashboardTests(unittest.TestCase):
         self.assertIn("Not research-qualified", html)
         self.assertIn("Historical test leg", html)
         self.assertIn("UNTRACKED", html)
-        trial_section = html.split("<h2>🎰 Trial Parlays</h2>", 1)[1]
-        trial_section = trial_section.split("<details>", 1)[0]
-        self.assertNotIn("Historical test leg", trial_section)
-        self.assertIn("No trial tickets to show yet.", trial_section)
+        hero = html.split(
+            '<section class="monster-hero"', 1
+        )[1].split("</section>", 1)[0]
+        self.assertNotIn("Historical test leg", hero)
+        self.assertIn("Waiting for a weekly ticket.", hero)
+        self.assertNotIn("<h2>🎰 Trial Parlays</h2>", html)
     def test_dynamic_values_are_escaped(self):
         payload = "<script>alert(1)</script>"
         ticket = {
@@ -124,11 +127,11 @@ class ResearchDashboardTests(unittest.TestCase):
         self.assertIn("Background ingestion scheduler disabled for this process.", source)
 
 
-    def test_trial_card_shows_paper_results(self):
+    def test_settled_trial_stays_in_history_not_monster(self):
         ticket = {
             "id": 3, "category": "Trial 2-Leg", "odds": "3x (+200)",
             "stake": "$10.00", "payout": "$30.00", "outcome": "WON",
-            "research_label": "Trial · Validation pending",
+            "research_label": "Trial · Not validated · Simulated",
             "legs": ["Visible trial leg"], "is_trial": True,
             "created": "Test time", "display_status": "ACTIVE",
             "paper_return": "$30.00", "paper_profit": "$20.00",
@@ -136,13 +139,31 @@ class ResearchDashboardTests(unittest.TestCase):
         html = render(
             make_research_status(15, 15, 0, [], self.now), ticket=ticket
         )
-        trial_section = html.split("<h2>🎰 Trial Parlays</h2>", 1)[1]
-        trial_section = trial_section.split("<details>", 1)[0]
-        self.assertIn("Visible trial leg", trial_section)
-        self.assertIn("Outcome WON", trial_section)
-        self.assertIn("Simulated stake $10.00", trial_section)
-        self.assertIn("Simulated return $30.00", trial_section)
-        self.assertIn("Simulated profit $20.00", trial_section)
+        hero = html.split(
+            '<section class="monster-hero"', 1
+        )[1].split("</section>", 1)[0]
+        self.assertNotIn("Visible trial leg", hero)
+        self.assertIn("Waiting for a weekly ticket.", hero)
+        history = html.split("🧾 Ticket History", 1)[1]
+        self.assertIn("Visible trial leg", history)
+        self.assertIn("WON", history)
+        self.assertIn("Not validated", history)
+        self.assertNotIn("<h2>🎰 Trial Parlays</h2>", html)
+
+        from dashboard_ui import ticket_display
+        slip = SimpleNamespace(
+            id=3, category="Trial 2-Leg", odds="3x (+200)",
+            stake="$10.00", payout="$30.00",
+            legs_json=json.dumps(["Visible trial leg"]),
+            status="ACTIVE", created_at=self.now,
+            publication_mode="TRIAL", outcome="WON",
+            paper_return=30.0, paper_profit=20.0,
+        )
+        mapped = ticket_display(slip)
+        self.assertEqual(mapped["outcome"], "WON")
+        self.assertEqual(mapped["paper_return"], "$30.00")
+        self.assertEqual(mapped["paper_profit"], "$20.00")
+
 
 if __name__ == "__main__":
     unittest.main()
