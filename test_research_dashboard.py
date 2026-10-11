@@ -69,11 +69,11 @@ class ResearchDashboardTests(unittest.TestCase):
         self.assertEqual(status["invalid_audit_rows"], 1)
     def test_pause_panel_when_main_database_unavailable(self):
         html = render(unavailable_research_status(), available=False)
-        self.assertIn("Dashboard data unavailable", html)
-        self.assertIn("Validation pending", html)
+        self.assertIn("Results are temporarily unavailable", html)
+        self.assertIn("Not validated", html)
         self.assertNotIn("Automatic parlays: PAUSED", html)
         self.assertNotIn('<section class="research-status"', html)
-        self.assertNotIn("<h2>🧪 Trial Parlays</h2>", html)
+        self.assertNotIn("<h2>🎰 Trial Parlays</h2>", html)
     def test_existing_ticket_marked_not_qualified(self):
         ticket = {
             "id": 1, "category": "Standard Cap", "odds": "Test odds",
@@ -88,7 +88,7 @@ class ResearchDashboardTests(unittest.TestCase):
         self.assertIn("Not research-qualified", html)
         self.assertIn("Historical test leg", html)
         self.assertIn("UNTRACKED", html)
-        trial_section = html.split("<h2>🧪 Trial Parlays</h2>", 1)[1]
+        trial_section = html.split("<h2>🎰 Trial Parlays</h2>", 1)[1]
         trial_section = trial_section.split("<details>", 1)[0]
         self.assertNotIn("Historical test leg", trial_section)
         self.assertIn("No trial tickets to show yet.", trial_section)
@@ -136,13 +136,13 @@ class ResearchDashboardTests(unittest.TestCase):
         html = render(
             make_research_status(15, 15, 0, [], self.now), ticket=ticket
         )
-        trial_section = html.split("<h2>🧪 Trial Parlays</h2>", 1)[1]
+        trial_section = html.split("<h2>🎰 Trial Parlays</h2>", 1)[1]
         trial_section = trial_section.split("<details>", 1)[0]
         self.assertIn("Visible trial leg", trial_section)
         self.assertIn("Outcome WON", trial_section)
-        self.assertIn("Paper stake $10.00", trial_section)
-        self.assertIn("Paper return $30.00", trial_section)
-        self.assertIn("Paper profit $20.00", trial_section)
+        self.assertIn("Simulated stake $10.00", trial_section)
+        self.assertIn("Simulated return $30.00", trial_section)
+        self.assertIn("Simulated profit $20.00", trial_section)
 
 if __name__ == "__main__":
     unittest.main()
