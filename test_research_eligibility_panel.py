@@ -1,6 +1,27 @@
 import unittest
 from datetime import datetime, timezone
-from test_research_dashboard import render
+from jinja2 import Environment
+from monster_ui import (
+    MONSTER_HERO_HTML,
+    RESEARCH_STATUS_HTML,
+    RESEARCH_ELIGIBILITY_HTML,
+)
+
+
+def render(status, available=True):
+    # Test internal templates independently of the public dashboard.
+    env = Environment(autoescape=True)
+    template = env.from_string(
+        MONSTER_HERO_HTML
+        + RESEARCH_STATUS_HTML
+        + RESEARCH_ELIGIBILITY_HTML
+    )
+    return template.render(
+        available=available,
+        research=status,
+        active_tickets=[],
+    )
+
 from research_dashboard import make_research_status, unavailable_research_status
 
 
