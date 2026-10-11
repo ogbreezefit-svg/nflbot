@@ -51,7 +51,11 @@ def normalize_news(payload):
             "link": link,
             "title": title,
             "candidate_player_name": candidate,
+            "source_provider": "Tank01",
+            "source_endpoint": "getNFLNews",
+            "source_record": dict(item),
             "published_at": None,
+            "publication_time_status": "UNVERIFIED",
             "availability_verified": False,
         }
 
