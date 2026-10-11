@@ -18,6 +18,15 @@ from db import SessionLocal, PickLog, ParlaySlip
 
 load_dotenv()
 log = logging.getLogger("ogbreeze.ingestion")
+log.setLevel(logging.INFO)
+if not log.handlers:
+    handler = logging.StreamHandler()
+    handler.setLevel(logging.INFO)
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)s %(name)s: %(message)s"
+    ))
+    log.addHandler(handler)
+log.propagate = False
 
 
 class SportsDataAPI:
@@ -410,6 +419,10 @@ def fetch_and_store_live_data():
     from db import init_db
     init_db()
     log.info("Starting data ingestion...")
+    log.info(
+        "Trial paper generation enabled: %s",
+        os.getenv("TRIAL_PARLAYS_ENABLED", "").lower() == "true",
+    )
     try:
         settle_moneyline_picks()
     except Exception:
