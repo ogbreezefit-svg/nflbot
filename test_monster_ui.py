@@ -21,13 +21,16 @@ class MonsterUITests(unittest.TestCase):
                 add_monster_hero(template)
 
     def test_waiting_state_has_no_fake_payout(self):
-        self.assertIn("Waiting for a weekly ticket.", MONSTER_HERO_HTML)
-        self.assertIn("Available when a ticket is published", MONSTER_HERO_HTML)
-        self.assertIn(
-            '<span class="monster-reel-value">—</span>',
-            MONSTER_HERO_HTML,
-        )
-        self.assertIn("Preview only.", MONSTER_HERO_HTML)
+        from jinja2 import Environment
+        html = Environment(autoescape=True).from_string(
+            MONSTER_HERO_HTML
+        ).render(available=True, active_tickets=[])
+        self.assertIn("Waiting for a weekly ticket.", html)
+        self.assertIn("Preview only.", html)
+        self.assertIn("Available when a ticket is published", html)
+        self.assertIn('>—</span>', html)
+        self.assertNotIn("Featured trial ticket", html)
+
 
     def test_reduced_motion_is_supported(self):
         self.assertIn("prefers-reduced-motion: reduce", MONSTER_HERO_HTML)
