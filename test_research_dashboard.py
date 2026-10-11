@@ -28,7 +28,8 @@ def render(status, available=True, ticket=None):
         "win_rate": "—", "review_count": 0,
         "active_tickets": [ticket] if ticket else [], "micro_tickets": [],
         "straight_preview": [], "straight_more": [], "games": [],
-        "weekly_summary": {"weeks": []}, "ticket_history": [], "undated": 0,
+        "weekly_summary": {"weeks": []},
+        "ticket_history": [ticket] if ticket else [], "undated": 0,
     }
     if Flask is None:
         return Environment(autoescape=True).from_string(template_value()).render(**context)
@@ -68,21 +69,44 @@ class ResearchDashboardTests(unittest.TestCase):
         self.assertEqual(status["invalid_audit_rows"], 1)
     def test_pause_panel_when_main_database_unavailable(self):
         html = render(unavailable_research_status(), available=False)
-        self.assertIn("Automatic parlays: PAUSED", html)
-        self.assertIn("unknown is not zero", html)
+        self.assertIn("Dashboard data unavailable", html)
+        self.assertIn("Validation pending", html)
+        self.assertNotIn("Automatic parlays: PAUSED", html)
+        self.assertNotIn('<section class="research-status"', html)
+        self.assertNotIn("<h2>🧪 Trial Parlays</h2>", html)
     def test_existing_ticket_marked_not_qualified(self):
-        ticket = {"id": 1, "category": "Standard Cap", "odds": "Test odds",
-                  "stake": "$50", "payout": "Estimate", "outcome": "UNTRACKED",
-                  "research_label": "Not research-qualified", "legs": ["Test leg"]}
-        html = render(make_research_status(15, 15, 0, [], self.now), ticket=ticket)
-        self.assertIn("Preserved Parlay Tickets", html)
+        ticket = {
+            "id": 1, "category": "Standard Cap", "odds": "Test odds",
+            "stake": "$50", "payout": "Estimate", "outcome": "UNTRACKED",
+            "research_label": "Not research-qualified",
+            "legs": ["Historical test leg"], "is_trial": False,
+            "created": "Test time", "display_status": "ACTIVE",
+        }
+        html = render(
+            make_research_status(15, 15, 0, [], self.now), ticket=ticket
+        )
         self.assertIn("Not research-qualified", html)
+        self.assertIn("Historical test leg", html)
+        self.assertIn("UNTRACKED", html)
+        trial_section = html.split("<h2>🧪 Trial Parlays</h2>", 1)[1]
+        trial_section = trial_section.split("<details>", 1)[0]
+        self.assertNotIn("Historical test leg", trial_section)
+        self.assertIn("No trial tickets to show yet.", trial_section)
     def test_dynamic_values_are_escaped(self):
-        status = make_research_status(15, 15, 0,
-            [self.audit(["<script>alert(1)</script>"])], self.now)
-        html = render(status)
-        self.assertNotIn("<script>alert(1)</script>", html)
-        self.assertIn("&lt;script&gt;", html)
+        payload = "<script>alert(1)</script>"
+        ticket = {
+            "id": 2, "category": "Trial 2-Leg", "odds": "Test odds",
+            "stake": "$10", "payout": "$30", "outcome": "PENDING",
+            "research_label": "Trial · Validation pending",
+            "legs": [payload], "is_trial": True,
+            "created": "Test time", "display_status": "ACTIVE",
+            "paper_return": "—", "paper_profit": "—",
+        }
+        html = render(
+            make_research_status(15, 15, 0, [], self.now), ticket=ticket
+        )
+        self.assertNotIn(payload, html)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", html)
     def test_ticket_display_preserves_labels_and_adds_qualification(self):
         tree = ast.parse((ROOT / "dashboard_ui.py").read_text())
         node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "ticket_display")
@@ -98,6 +122,27 @@ class ResearchDashboardTests(unittest.TestCase):
         source = (ROOT / "dashboard.py").read_text()
         self.assertIn("INGESTION_SCHEDULER_ENABLED", source)
         self.assertIn("Background ingestion scheduler disabled for this process.", source)
+
+
+    def test_trial_card_shows_paper_results(self):
+        ticket = {
+            "id": 3, "category": "Trial 2-Leg", "odds": "3x (+200)",
+            "stake": "$10.00", "payout": "$30.00", "outcome": "WON",
+            "research_label": "Trial · Validation pending",
+            "legs": ["Visible trial leg"], "is_trial": True,
+            "created": "Test time", "display_status": "ACTIVE",
+            "paper_return": "$30.00", "paper_profit": "$20.00",
+        }
+        html = render(
+            make_research_status(15, 15, 0, [], self.now), ticket=ticket
+        )
+        trial_section = html.split("<h2>🧪 Trial Parlays</h2>", 1)[1]
+        trial_section = trial_section.split("<details>", 1)[0]
+        self.assertIn("Visible trial leg", trial_section)
+        self.assertIn("Outcome WON", trial_section)
+        self.assertIn("Paper stake $10.00", trial_section)
+        self.assertIn("Paper return $30.00", trial_section)
+        self.assertIn("Paper profit $20.00", trial_section)
 
 if __name__ == "__main__":
     unittest.main()
