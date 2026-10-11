@@ -25,9 +25,9 @@ class MonsterUITests(unittest.TestCase):
         html = Environment(autoescape=True).from_string(
             MONSTER_HERO_HTML
         ).render(available=True, active_tickets=[])
-        self.assertIn("Waiting for a weekly ticket.", html)
-        self.assertIn("Preview only.", html)
-        self.assertIn("Available when a ticket is published", html)
+        self.assertIn("Waiting for a qualifying Monster.", html)
+        self.assertIn("No qualifying Monster ticket is available.", html)
+        self.assertIn("No pending two-leg side bet available.", html)
         self.assertIn('>—</span>', html)
         self.assertNotIn("Featured trial ticket", html)
 

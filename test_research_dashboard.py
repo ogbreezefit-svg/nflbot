@@ -93,7 +93,7 @@ class ResearchDashboardTests(unittest.TestCase):
             '<section class="monster-hero"', 1
         )[1].split("</section>", 1)[0]
         self.assertNotIn("Historical test leg", hero)
-        self.assertIn("Waiting for a weekly ticket.", hero)
+        self.assertIn("Waiting for a qualifying Monster.", hero)
         self.assertNotIn("<h2>🎰 Trial Parlays</h2>", html)
     def test_dynamic_values_are_escaped(self):
         payload = "<script>alert(1)</script>"
@@ -143,7 +143,7 @@ class ResearchDashboardTests(unittest.TestCase):
             '<section class="monster-hero"', 1
         )[1].split("</section>", 1)[0]
         self.assertNotIn("Visible trial leg", hero)
-        self.assertIn("Waiting for a weekly ticket.", hero)
+        self.assertIn("Waiting for a qualifying Monster.", hero)
         history = html.split("🧾 Ticket History", 1)[1]
         self.assertIn("Visible trial leg", history)
         self.assertIn("WON", history)

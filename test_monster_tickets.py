@@ -34,7 +34,7 @@ class MonsterTicketTests(unittest.TestCase):
             self.ticket(1, trial=False),
             self.ticket(2, outcome="WON"),
         ])
-        self.assertIn("Waiting for a weekly ticket.", html)
+        self.assertIn("Waiting for a qualifying Monster.", html)
         self.assertNotIn("$30.00", html)
 
     def test_outage_hides_ticket(self):
@@ -44,7 +44,7 @@ class MonsterTicketTests(unittest.TestCase):
 
     def test_ticket_text_is_escaped(self):
         ticket = self.ticket()
-        ticket["legs"] = ["<script>alert(1)</script>"]
+        ticket["legs"] = ["<script>alert(1)</script>", "Second test leg"]
         html = self.render([ticket])
         self.assertIn("&lt;script&gt;", html)
         self.assertNotIn("<script>", html)

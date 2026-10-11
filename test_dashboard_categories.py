@@ -25,7 +25,7 @@ class DashboardCategoryTests(unittest.TestCase):
             "id": number,
             "category": category,
             "is_trial": trial,
-            "legs": [f"Selection {number}"],
+            "legs": ([f"Selection {number}", "Second trial leg"] if trial else [f"Selection {number}"]),
             "odds": "+200",
             "stake": "$10.00",
             "payout": "$30.00",
@@ -75,6 +75,17 @@ class DashboardCategoryTests(unittest.TestCase):
         )[1].split("</section>", 1)[0]
         self.assertIn("Ticket #105", hero)
         self.assertIn("Selection 105", hero)
+        main = html.split(
+            'id="monster-main-ticket"', 1
+        )[1].split("<aside", 1)[0]
+        side = html.split('id="monster-side-bet"', 1)[1].split(
+            "</aside>", 1
+        )[0]
+        self.assertNotIn("Ticket #105", main)
+        self.assertIn("Waiting for a qualifying Monster.", main)
+        self.assertIn("Ticket #105", side)
+        self.assertIn("Second trial leg", side)
+        self.assertIn("Not validated", side)
         self.assertIn("Additional tracked selection", html)
         self.assertNotIn("Show 1 more picks", html)
 
