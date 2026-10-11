@@ -414,6 +414,14 @@ def fetch_and_store_live_data():
         settle_moneyline_picks()
     except Exception:
         log.exception("Moneyline settlement failed; continuing ingestion")
+    if os.getenv("TRIAL_PARLAYS_ENABLED", "").lower() == "true":
+        try:
+            from trial_parlays import settle_trial_tickets
+            result = settle_trial_tickets()
+            log.info("Trial paper ticket settlement: %s", result)
+        except Exception:
+            log.exception("Trial ticket settlement failed; continuing ingestion")
+
     try:
         refresh_team_research()
         refresh_player_research()
@@ -451,8 +459,17 @@ def fetch_and_store_live_data():
         log.exception(
             "Pregame evidence capture failed; parlays remain paused"
         )
+    # Preserve strict research diagnostics and the paused legacy builders.
     build_parlay(matchups)
     build_tier_parlays(matchups)
+
+    if os.getenv("TRIAL_PARLAYS_ENABLED", "").lower() == "true":
+        try:
+            from trial_parlays import build_trial_parlays
+            result = build_trial_parlays(matchups)
+            log.info("Trial paper ticket generation: %s", result)
+        except Exception:
+            log.exception("Trial ticket generation failed; no approval implied")
     log.info("Ingestion finished.")
 
 

@@ -82,6 +82,48 @@ class ParlaySlip(Base):
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
 
+from sqlalchemy import ForeignKey, UniqueConstraint
+
+
+# Ticket outcomes are separate from ACTIVE/ARCHIVED display status.
+ParlaySlip.publication_mode = Column(String, nullable=True)
+ParlaySlip.selection_method = Column(String, nullable=True)
+ParlaySlip.ticket_key = Column(String, nullable=True)
+ParlaySlip.outcome = Column(String, nullable=True)
+ParlaySlip.settled_at = Column(DateTime(timezone=True), nullable=True)
+ParlaySlip.paper_stake = Column(Float, nullable=True)
+ParlaySlip.paper_return = Column(Float, nullable=True)
+ParlaySlip.paper_profit = Column(Float, nullable=True)
+
+Index("uq_parlays_ticket_key", ParlaySlip.ticket_key, unique=True)
+
+
+class ParlayLeg(Base):
+    __tablename__ = "parlay_legs"
+
+    id = Column(Integer, primary_key=True)
+    ticket_id = Column(
+        Integer, ForeignKey("parlays.id"), nullable=False
+    )
+    pick_id = Column(
+        Integer, ForeignKey("picks.id"), nullable=False
+    )
+    position = Column(Integer, nullable=False)
+    quoted_odds = Column(Float, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "ticket_id", "position",
+            name="uq_parlay_legs_ticket_position"
+        ),
+        UniqueConstraint(
+            "ticket_id", "pick_id",
+            name="uq_parlay_legs_ticket_pick"
+        ),
+    )
+
+
 def add_missing_columns():
     """create_all never adds columns to old tables, so add any that are missing."""
     insp = inspect(engine)
@@ -109,6 +151,7 @@ def init_db():
     required = {c.name for c in PickLog.__table__.columns}
     if not required.issubset(existing):
         raise RuntimeError("Pick schema migration incomplete; check database logs.")
-    for index in PickLog.__table__.indexes:
-        index.create(bind=engine, checkfirst=True)
+    for model in (PickLog, ParlaySlip):
+        for index in model.__table__.indexes:
+            index.create(bind=engine, checkfirst=True)
     log.info("Database ready (%s)", engine.dialect.name)

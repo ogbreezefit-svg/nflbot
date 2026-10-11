@@ -154,8 +154,8 @@ def candidate_labels(matchups):
 
 
 def track_ticket(session, slip, matchups):
-    """Add selection records in the same transaction as the ticket."""
-    from db import PickLog
+    """Save ticket membership and ticket-specific prices atomically."""
+    from db import PickLog, ParlayLeg
     from nfl_moneyline import as_utc, valid_odds
     from sqlalchemy.exc import IntegrityError
 
@@ -165,60 +165,88 @@ def track_ticket(session, slip, matchups):
 
     registry = candidate_labels(matchups)
     now = datetime.now(timezone.utc)
+    resolved = []
+    seen = set()
 
+    # Validate all selections before writing any ticket or leg.
     for label in labels:
         if not isinstance(label, str):
             raise ValueError("Unsupported non-text leg")
-
         if label.startswith(("Note:", "Game Script:")):
             continue
 
         candidates = registry.get(label, [])
         if len(candidates) != 1:
-            # Fail closed: do not save a ticket whose selection is ambiguous.
             raise ValueError(f"Unmatched or ambiguous leg: {label}")
 
         item = candidates[0]
-        m = item["matchup"]
-        event_id = m.get("event_id")
+        matchup = item["matchup"]
+        event_id = matchup.get("event_id")
         if not event_id or not valid_odds(item["odds"]):
             raise ValueError(f"Missing event or valid price: {label}")
 
-        kickoff = as_utc(m.get("commence_time"))
+        kickoff = as_utc(matchup.get("commence_time"))
         if kickoff <= now:
             raise ValueError(f"Game already started: {label}")
 
         key = selection_key(
             event_id, item["market"], item["side"], item["line"]
         )
+        if key in seen:
+            raise ValueError(f"Duplicate selection in ticket: {label}")
+        seen.add(key)
+        resolved.append((label, item, kickoff, key))
 
-        if session.query(PickLog.id).filter(
+    if len(resolved) < 2:
+        raise ValueError("A parlay requires at least two actual selections")
+
+    session.add(slip)
+    session.flush()
+
+    if session.query(ParlayLeg.id).filter(
+        ParlayLeg.ticket_id == slip.id
+    ).first():
+        raise ValueError("Ticket already has linked legs")
+
+    for position, (label, item, kickoff, key) in enumerate(resolved, 1):
+        matchup = item["matchup"]
+        pick = session.query(PickLog).filter(
             PickLog.pick_key == key
-        ).first():
-            continue
+        ).first()
 
-        try:
-            with session.begin_nested():
-                session.add(PickLog(
-                    pick_key=key,
-                    event_id=event_id,
-                    market_key=item["market"],
-                    market_name=f"{m['away']} @ {m['home']}",
-                    player_name=label,
-                    pick_side=item["side"],
-                    picked_line=item["line"],
-                    picked_odds=float(item["odds"]),
-                    kickoff_time=kickoff,
-                    status="ACTIVE",
-                    stake=0.0,
-                    is_shadow=False,
-                ))
-                session.flush()
+        if pick is None:
+            try:
+                with session.begin_nested():
+                    pick = PickLog(
+                        pick_key=key,
+                        event_id=matchup["event_id"],
+                        market_key=item["market"],
+                        market_name=f"{matchup['away']} @ {matchup['home']}",
+                        player_name=label,
+                        pick_side=item["side"],
+                        picked_line=item["line"],
+                        picked_odds=float(item["odds"]),
+                        kickoff_time=kickoff,
+                        status="ACTIVE",
+                        stake=0.0,
+                        is_shadow=False,
+                    )
+                    session.add(pick)
+                    session.flush()
+            except IntegrityError:
+                pick = session.query(PickLog).filter(
+                    PickLog.pick_key == key
+                ).first()
+                if pick is None:
+                    raise
 
-        except IntegrityError:
-            if not session.query(PickLog.id).filter(
-                PickLog.pick_key == key
-            ).first():
-                raise
+        session.add(ParlayLeg(
+            ticket_id=slip.id,
+            pick_id=pick.id,
+            position=position,
+            quoted_odds=float(item["odds"]),
+        ))
 
+    session.flush()
     return slip
+
