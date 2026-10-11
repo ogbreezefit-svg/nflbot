@@ -21,9 +21,13 @@ class MonsterUITests(unittest.TestCase):
                 add_monster_hero(template)
 
     def test_waiting_state_has_no_fake_payout(self):
-        self.assertIn("Waiting for a research-qualified ticket.", MONSTER_HERO_HTML)
-        self.assertIn("No quoted ticket or payout", MONSTER_HERO_HTML)
-        self.assertIn("presentation-only waiting state", MONSTER_HERO_HTML)
+        self.assertIn("Waiting for a weekly ticket.", MONSTER_HERO_HTML)
+        self.assertIn("Available when a ticket is published", MONSTER_HERO_HTML)
+        self.assertIn(
+            '<span class="monster-reel-value">—</span>',
+            MONSTER_HERO_HTML,
+        )
+        self.assertIn("Preview only.", MONSTER_HERO_HTML)
 
     def test_reduced_motion_is_supported(self):
         self.assertIn("prefers-reduced-motion: reduce", MONSTER_HERO_HTML)

@@ -124,18 +124,17 @@ MONSTER_HERO_HTML = """
 </style>
 
 <section class="monster-hero" aria-labelledby="monster-title">
-    <p class="monster-eyebrow">Weekly showcase · Research gated</p>
-    <h2 id="monster-title">Weekly Monster</h2>
+    <p class="monster-eyebrow">Weekly showcase</p>
+    <h2 id="monster-title">🎰 Weekly Monster</h2>
     <p class="monster-intro">
-        A slot-machine showcase for a future research-qualified,
-        10–30-leg weekly ticket. No selections are forced to fill the reels.
+        Your weekly ticket showcase.
     </p>
 
     <div class="monster-machine">
         <div class="monster-reel">
             <span class="monster-reel-label">Ticket</span>
-            <span class="monster-reel-value">Not available</span>
-            <span class="monster-reel-note">No qualified ticket connected</span>
+            <span class="monster-reel-value">Coming soon</span>
+            <span class="monster-reel-note">No ticket available</span>
         </div>
 
         <div class="monster-reel monster-center">
@@ -146,19 +145,15 @@ MONSTER_HERO_HTML = """
         </div>
 
         <div class="monster-reel">
-            <span class="monster-reel-label">Potential return</span>
+            <span class="monster-reel-label">Estimated return</span>
             <span class="monster-reel-value">—</span>
-            <span class="monster-reel-note">No quoted ticket or payout</span>
+            <span class="monster-reel-note">Available when a ticket is published</span>
         </div>
     </div>
 
-    <p class="monster-status">Waiting for a research-qualified ticket.</p>
+    <p class="monster-status">Waiting for a weekly ticket.</p>
     <p class="monster-disclaimer">
-        This is a presentation-only waiting state, not a live qualification
-        assessment. It does not generate or approve bets. Shadow selections
-        and preserved legacy tickets are not promoted into this showcase.
-        A large potential payout would not establish a likely win or a
-        profitable edge.
+        Preview only. No ticket or return is available.
     </p>
 </section>
 """
