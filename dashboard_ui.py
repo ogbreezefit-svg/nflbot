@@ -34,6 +34,12 @@ def describe_pick(row):
 
 
 def ticket_display(slip):
+    is_trial = getattr(slip, "publication_mode", None) == "TRIAL"
+
+    def paper_money(field):
+        value = getattr(slip, field, None)
+        return f"${value:,.2f}" if value is not None else "—"
+
     try:
         labels = json.loads(slip.legs_json or "[]")
         if not isinstance(labels, list):
@@ -55,8 +61,17 @@ def ticket_display(slip):
         "payout": slip.payout or "—",
         "legs": labels,
         "display_status": slip.status or "UNKNOWN",
-        "outcome": "UNTRACKED",
-        "research_label": "Not research-qualified",
+        "is_trial": is_trial,
+        "outcome": (
+            getattr(slip, "outcome", None) or "UNTRACKED"
+            if is_trial else "UNTRACKED"
+        ),
+        "research_label": (
+            "Trial · Not validated · Simulated"
+            if is_trial else "Not research-qualified"
+        ),
+        "paper_return": paper_money("paper_return") if is_trial else "—",
+        "paper_profit": paper_money("paper_profit") if is_trial else "—",
         "created": display_time(slip.created_at),
     }
 
