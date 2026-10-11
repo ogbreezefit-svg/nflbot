@@ -24,6 +24,10 @@ def unavailable_research_status():
         "observation_count": None, "distinct_events": None,
         "eligible_settled_events": None, "recent_audit_events": None,
         "last_audit_utc": None, "blockers": [], "invalid_audit_rows": 0,
+        "events_selected_before_integrity_checks": None,
+        "superseded_eligible_observations": None,
+        "excluded_observations_by_reason": None,
+        "excluded_selected_events_by_reason": None,
     }
 
 def aware(value):
@@ -105,19 +109,32 @@ def load_research_status(session, now=None):
                         if pick.settled_at is not None else None,
                 },
             })
-        selected, _ = select_observations(records, now, 1, 24)
+        selected, exclusions = select_observations(records, now, 1, 24)
         eligible = 0
+        rejected_events = Counter()
         for record in selected:
             row = session.get(Observation, record["observation_key"])
             try:
                 validate_selected(record, json.loads(row.evidence_json), 60)
                 eligible += 1
-            except (ValueError, TypeError, AttributeError, KeyError):
-                continue
+            except (ValueError, TypeError, AttributeError, KeyError) as exc:
+                reason = (
+                    str(exc) if isinstance(exc, ValueError)
+                    else "INVALID_SELECTED_EVIDENCE"
+                )
+                rejected_events[reason] += 1
         audits = session.query(ParlayResearchDecision).filter(
             ParlayResearchDecision.assessed_at >= now - AUDIT_TTL
         ).all()
-        return make_research_status(len(metadata), event_count, eligible, audits, now)
+        result = make_research_status(
+            len(metadata), event_count, eligible, audits, now
+        )
+        result.update({
+            "events_selected_before_integrity_checks": len(selected),
+            **exclusions,
+            "excluded_selected_events_by_reason": dict(rejected_events),
+        })
+        return result
     except Exception as exc:
         log.warning("Research dashboard unavailable (%s); creation remains paused.",
                     type(exc).__name__)
